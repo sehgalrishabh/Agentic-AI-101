@@ -20,14 +20,14 @@ This chapter shows how to give your agent a working memory, long-term memory, an
 
 ```mermaid
 flowchart LR
-  U[User Message] -> C[Context Window]
-  C -> M[Model]
-  M -> O[Response]
+  U[User Message] --> C[Context Window]
+  C --> M[Model]
+  M --> O[Response]
   C -. optional .-> S[Summarized Memory]
   C -. optional .-> R[Retrieved Docs]
 ```
 
--
+---
 
 ## 1. Short-Term Memory (The Conversation Buffer)
 
@@ -37,8 +37,8 @@ Every turn, you send the **entire conversation** so far.
 
 ```mermaid
 flowchart TD
-  T1[Turn 1: User -> Hi] -> T2[Turn 2: User+AI+User]
-  T2 -> T3[Turn 3: User+AI+User+AI+User]
+  T1[Turn 1: User says Hi] --> T2[Turn 2: User+AI+User]
+  T2 --> T3[Turn 3: User+AI+User+AI+User]
 ```
 
 ### Pass-Through Example
@@ -69,7 +69,7 @@ Keep only the last N turns and drop the rest.
 
 ```mermaid
 flowchart LR
-  H[Full History] -> W[Last N Messages] -> M[Model]
+  H[Full History] --> W[Last N Messages] --> M[Model]
 ```
 
 ```python
@@ -82,9 +82,9 @@ Summarize older turns into a compact memory note.
 
 ```mermaid
 flowchart LR
-  H[Older History] -> S[Summarize]
-  S -> C[Context Window]
-  C -> M[Model]
+  H[Older History] --> S[Summarize]
+  S --> C[Context Window]
+  C --> M[Model]
 ```
 
 ```python
@@ -132,11 +132,11 @@ Think of RAG as an **open-book exam**:
 
 ```mermaid
 flowchart LR
-  Q[User Question] -> E[Embed Query]
-  E -> R[Retrieve Top K Chunks]
-  R -> P[Prompt + Chunks]
-  P -> M[Model]
-  M -> O[Grounded Answer]
+  Q[User Question] --> E[Embed Query]
+  E --> R[Retrieve Top K Chunks]
+  R --> P[Prompt + Chunks]
+  P --> M[Model]
+  M --> O[Grounded Answer]
 ```
 
 ### The RAG Pipeline
@@ -168,9 +168,9 @@ Before MCP, every integration was custom. If you wanted Google Drive + Slack + G
 
 ```mermaid
 flowchart LR
-  A[Agent (MCP Client)] -> S[MCP Server]
-  S -> D[Data Source: Drive/Slack/GitHub]
-  D -> S -> A
+  A[Agent (MCP Client)] --> S[MCP Server]
+  S --> D[Data Source: Drive/Slack/GitHub]
+  D --> S --> A
 ```
 
 ### When to Use RAG vs MCP
@@ -180,9 +180,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  Q[Need Context?] -> D{Type of Source}
-  D - Static Docs -> RAG[RAG Pipeline]
-  D - Live System -> MCP[MCP Integration]
+  Q[Need Context?] --> D{Type of Source}
+  D -- Static Docs --> RAG[RAG Pipeline]
+  D -- Live System --> MCP[MCP Integration]
 ```
 
 ### Use Cases: RAG vs MCP
@@ -198,8 +198,8 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  Q[User Question] -> RAG[Retrieve Docs]
-  RAG -> A[Grounded Answer]
+  Q[User Question] --> RAG[Retrieve Docs]
+  RAG --> A[Grounded Answer]
 ```
 
 **MCP Use Cases (Live Systems)**
@@ -213,9 +213,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  Q[User Request] -> MCP[Call MCP Server]
-  MCP -> S[Live System]
-  S -> MCP -> A[Agent Response]
+  Q[User Request] --> MCP[Call MCP Server]
+  MCP --> S[Live System]
+  S --> MCP --> A[Agent Response]
 ```
 
 ## 4. Project: PDF Chat Agent (LangChain)
@@ -232,13 +232,13 @@ pip install langchain-community langchain-openai faiss-cpu pypdf
 
 ```mermaid
 flowchart LR
-  P[PDF File] -> L[Load]
-  L -> C[Chunk]
-  C -> E[Embed]
-  E -> V[Vector Store]
-  V -> R[Retriever]
-  R -> QA[Retrieval QA Chain]
-  QA -> A[Answer]
+  P[PDF File] --> L[Load]
+  L --> C[Chunk]
+  C --> E[Embed]
+  E --> V[Vector Store]
+  V --> R[Retriever]
+  R --> QA[Retrieval QA Chain]
+  QA --> A[Answer]
 ```
 
 ### Code: PDF Chat Agent
@@ -284,15 +284,15 @@ print(response)
 
 ```mermaid
 flowchart LR
-  Q[User Question] -> R[Retriever Finds Chunks]
-  R -> P[Prompt + Chunks]
-  P -> M[LLM]
-  M -> O[Answer]
+  Q[User Question] --> R[Retriever Finds Chunks]
+  R --> P[Prompt + Chunks]
+  P --> M[LLM]
+  M --> O[Answer]
 ```
 
 The agent did **not** read the whole PDF. It found the most relevant chunk, inserted it into the prompt, and answered based on that evidence.
 
--
+---
 
 ## 5. Putting It Together: Memory + RAG Agent (LangChain)
 
@@ -300,12 +300,12 @@ Now combine short-term memory with long-term memory.
 
 ```mermaid
 flowchart LR
-  U[User Question] -> H[Short-Term Memory]
-  U -> R[Retriever]
-  H -> P[Prompt]
-  R -> P
-  P -> M[Model]
-  M -> O[Answer]
+  U[User Question] --> H[Short-Term Memory]
+  U --> R[Retriever]
+  H --> P[Prompt]
+  R --> P
+  P --> M[Model]
+  M --> O[Answer]
 ```
 
 ### Code: Memory + RAG
@@ -350,7 +350,7 @@ chain.invoke({"question": "How many days does it allow?"})
 - Building RAG without citing sources
 - Using memory for factual data instead of retrieval
 
--
+---
 
 ## Checklist
 
@@ -359,7 +359,7 @@ chain.invoke({"question": "How many days does it allow?"})
 - My agent retrieves documents before answering
 - My responses are grounded in sources
 
--
+---
 
 ## What Comes Next
 
