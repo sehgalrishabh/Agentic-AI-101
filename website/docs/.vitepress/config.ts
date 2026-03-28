@@ -31,8 +31,7 @@ export default withMermaid(defineConfig({
       {
         text: "Part II: The Builder's Workshop",
         items: [
-          { text: 'Chapter 3: Your First Agent (Python)', link: '/builders-workshop/03-first-agent' },
-          { text: 'Chapter 3: Your First Agent (Node.js)', link: '/builders-workshop/03-first-agent-nodejs' },
+          { text: 'Chapter 3: Your First Agent', link: '/builders-workshop/03-first-agent' },
           { text: 'Chapter 4: Memory & Context', link: '/builders-workshop/04-memory-context' },
           { text: 'Chapter 5: Tool Use & Integrations', link: '/builders-workshop/05-tool-use-integrations' },
         ],

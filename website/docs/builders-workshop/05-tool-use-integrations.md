@@ -64,7 +64,9 @@ The model never ran your code. It only _asked for it to be run_. Your orchestrat
 
 Before using a framework, see what actually travels over the wire.
 
-```python
+::: code-group
+
+```python [Python]
 import openai
 import json
 
@@ -103,6 +105,47 @@ print(tool_call.function.name)       # get_calendar_events
 print(tool_call.function.arguments)  # {"date": "2025-07-10"}
 ```
 
+```javascript [Node.js]
+// npm install openai
+import OpenAI from "openai";
+
+const client = new OpenAI();
+
+// Define the tool
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "get_calendar_events",
+      description: "Get events on the user's calendar for a given date.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: {
+            type: "string",
+            description: "Date in YYYY-MM-DD format",
+          },
+        },
+        required: ["date"],
+      },
+    },
+  },
+];
+
+// First LLM call: model decides to use the tool
+const response = await client.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "What do I have on 2025-07-10?" }],
+  tools,
+});
+
+const toolCall = response.choices[0].message.tool_calls[0];
+console.log(toolCall.function.name);       // get_calendar_events
+console.log(toolCall.function.arguments);  // {"date":"2025-07-10"}
+```
+
+:::
+
 The model returned JSON, not prose. Your code runs the actual function and sends the result back in a second call.
 
 ---
@@ -113,7 +156,9 @@ LangChain wraps function calling into a clean `@tool` decorator. This is the sta
 
 ### The `@tool` Decorator
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_core.tools import tool
 
 @tool
@@ -122,6 +167,26 @@ def get_weather(city: str) -> str:
     # Replace with a real API call
     return f"It is 72°F and sunny in {city}."
 ```
+
+```javascript [Node.js]
+// npm install langchain @langchain/core
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+
+const getWeather = tool(
+  async ({ city }) => {
+    // Replace with a real API call
+    return `It is 72°F and sunny in ${city}.`;
+  },
+  {
+    name: "get_weather",
+    description: "Get the current weather for a city.",
+    schema: z.object({ city: z.string() }),
+  }
+);
+```
+
+:::
 
 Three things LangChain extracts automatically:
 
@@ -133,7 +198,9 @@ Three things LangChain extracts automatically:
 
 ### Registering Multiple Tools
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_core.tools import tool
 
 @tool
@@ -155,6 +222,47 @@ def send_email(to: str, subject: str, body: str) -> str:
 tools = [get_weather, search_web, send_email]
 ```
 
+```javascript [Node.js]
+// npm install langchain @langchain/core zod
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+
+const getWeather = tool(
+  async ({ city }) => `72°F and sunny in ${city}.`,
+  {
+    name: "get_weather",
+    description: "Get the current weather for a city.",
+    schema: z.object({ city: z.string() }),
+  }
+);
+
+const searchWeb = tool(
+  async ({ query }) => `Top result for '${query}': ...`,
+  {
+    name: "search_web",
+    description: "Search the web for current information.",
+    schema: z.object({ query: z.string() }),
+  }
+);
+
+const sendEmail = tool(
+  async ({ to }) => `Email sent to ${to}.`,
+  {
+    name: "send_email",
+    description: "Send an email to a recipient.",
+    schema: z.object({
+      to: z.string(),
+      subject: z.string(),
+      body: z.string(),
+    }),
+  }
+);
+
+const tools = [getWeather, searchWeb, sendEmail];
+```
+
+:::
+
 ---
 
 ## 3. Structured Output with Pydantic
@@ -167,17 +275,29 @@ Pydantic enforces the shape of that output.
 
 ### The Problem
 
-```python
+::: code-group
+
+```python [Python]
 # Unpredictable. Might say "Tomorrow at 9am" or "9:00 AM on July 10th" or "morning"
 response = llm.invoke("When should we schedule the meeting?")
 print(response.content)  # "I think tomorrow morning works well!"
 ```
 
+```javascript [Node.js]
+// Unpredictable. Might say "Tomorrow at 9am" or "9:00 AM on July 10th" or "morning"
+const response = await llm.invoke("When should we schedule the meeting?");
+console.log(response.content); // "I think tomorrow morning works well!"
+```
+
+:::
+
 You cannot parse that reliably. Pydantic fixes it.
 
 ### Defining a Schema
 
-```python
+::: code-group
+
+```python [Python]
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -190,9 +310,27 @@ class MeetingRequest(BaseModel):
     notes: Optional[str] = Field(default=None, description="Any additional notes")
 ```
 
+```javascript [Node.js]
+// In Node.js, use plain objects or zod for schema validation
+import { z } from "zod";
+
+const MeetingRequestSchema = z.object({
+  title: z.string().describe("Title or purpose of the meeting"),
+  date: z.string().describe("Date in YYYY-MM-DD format"),
+  start_time: z.string().describe("Start time in HH:MM 24-hour format"),
+  duration_minutes: z.number().describe("Duration of meeting in minutes"),
+  attendees: z.array(z.string()).describe("List of attendee email addresses"),
+  notes: z.string().optional().describe("Any additional notes"),
+});
+```
+
+:::
+
 ### Binding the Schema to an LLM
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(model="gpt-4o", temperature=0)
@@ -209,7 +347,28 @@ print(result.duration_minutes) # 30
 print(result.attendees)        # ["alice@acme.com", "bob@acme.com"]
 ```
 
-Now the output is a typed Python object. You can pass it directly to your Google Calendar function.
+```javascript [Node.js]
+// npm install @langchain/openai zod
+import { ChatOpenAI } from "@langchain/openai";
+import { z } from "zod";
+
+const llm = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+const structuredLlm = llm.withStructuredOutput(MeetingRequestSchema);
+
+const result = await structuredLlm.invoke(
+  "Schedule a 30-minute design review with alice@acme.com and bob@acme.com on July 10th at 2pm"
+);
+
+console.log(result.title);            // "Design Review"
+console.log(result.date);             // "2025-07-10"
+console.log(result.start_time);       // "14:00"
+console.log(result.duration_minutes); // 30
+console.log(result.attendees);        // ["alice@acme.com", "bob@acme.com"]
+```
+
+:::
+
+Now the output is a typed object. You can pass it directly to your Google Calendar function.
 
 ```mermaid
 flowchart LR
@@ -225,7 +384,9 @@ flowchart LR
 
 You can control how aggressively an agent reaches for tools.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(model="gpt-4o")
@@ -239,6 +400,24 @@ llm_forced = llm.bind_tools(tools, tool_choice="any")
 # Force a specific tool
 llm_specific = llm.bind_tools(tools, tool_choice="get_calendar_events")
 ```
+
+```javascript [Node.js]
+// npm install @langchain/openai
+import { ChatOpenAI } from "@langchain/openai";
+
+const llm = new ChatOpenAI({ model: "gpt-4o" });
+
+// Default: model decides when to use tools
+const llmWithTools = llm.bindTools(tools);
+
+// Force the model to always call a tool
+const llmForced = llm.bindTools(tools, { tool_choice: "any" });
+
+// Force a specific tool
+const llmSpecific = llm.bindTools(tools, { tool_choice: "get_calendar_events" });
+```
+
+:::
 
 For most agents, leave this on default. Let the model decide. Override only when the task always requires a specific tool (e.g., a booking agent that must always check availability first).
 
@@ -265,7 +444,9 @@ flowchart TD
 
 LangChain's `create_react_agent` gives you this loop out of the box.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain import hub
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
@@ -296,6 +477,55 @@ executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
 executor.invoke({"input": "Book a 1-hour sync with sarah@acme.com on July 10th, find the first available slot."})
 ```
 
+```javascript [Node.js]
+// npm install langchain @langchain/openai zod
+import { ChatOpenAI } from "@langchain/openai";
+import { tool } from "@langchain/core/tools";
+import { createReactAgent, AgentExecutor } from "langchain/agents";
+import { pull } from "langchain/hub";
+import { z } from "zod";
+
+const llm = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+
+const checkCalendar = tool(
+  async ({ date }) => `Available slots on ${date}: 9:00, 11:00, 14:00, 16:00`,
+  {
+    name: "check_calendar",
+    description: "Check the calendar for available time slots on a given date (YYYY-MM-DD).",
+    schema: z.object({ date: z.string() }),
+  }
+);
+
+const bookMeeting = tool(
+  async ({ date, time, title, attendees }) =>
+    `Meeting '${title}' booked on ${date} at ${time} with ${attendees}.`,
+  {
+    name: "book_meeting",
+    description: "Book a meeting on the calendar. Attendees should be comma-separated emails.",
+    schema: z.object({
+      date: z.string(),
+      time: z.string(),
+      title: z.string(),
+      attendees: z.string(),
+    }),
+  }
+);
+
+const tools = [checkCalendar, bookMeeting];
+
+// Pull the standard ReAct prompt from LangChain Hub
+const prompt = await pull("hwchase17/react");
+
+const agent = await createReactAgent({ llm, tools, prompt });
+const executor = new AgentExecutor({ agent, tools, verbose: true });
+
+await executor.invoke({
+  input: "Book a 1-hour sync with sarah@acme.com on July 10th, find the first available slot.",
+});
+```
+
+:::
+
 With `verbose=True` you will see the full ReAct trace: Thought → Action → Observation → repeat.
 
 ---
@@ -323,7 +553,9 @@ pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-
 
 ### Google Calendar Helpers
 
-```python
+::: code-group
+
+```python [Python]
 # calendar_utils.py
 import datetime
 from google.auth.transport.requests import Request
@@ -379,9 +611,68 @@ def create_event(title: str, date: str, start_time: str, duration_minutes: int, 
     return created.get("htmlLink", "Event created.")
 ```
 
+```javascript [Node.js]
+// calendar_utils.js
+// npm install googleapis
+import { google } from "googleapis";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { createServer } from "http";
+
+const SCOPES = ["https://www.googleapis.com/auth/calendar"];
+
+export async function getCalendarService() {
+  const credentials = JSON.parse(readFileSync("credentials.json", "utf-8"));
+  const { client_secret, client_id, redirect_uris } = credentials.installed;
+  const auth = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+
+  if (existsSync("token.json")) {
+    auth.setCredentials(JSON.parse(readFileSync("token.json", "utf-8")));
+  } else {
+    // In a real app, implement the OAuth flow here
+    throw new Error("token.json not found. Complete OAuth flow first.");
+  }
+
+  return google.calendar({ version: "v3", auth });
+}
+
+export async function listEvents(date) {
+  const service = await getCalendarService();
+  const res = await service.events.list({
+    calendarId: "primary",
+    timeMin: `${date}T00:00:00Z`,
+    timeMax: `${date}T23:59:59Z`,
+    singleEvents: true,
+    orderBy: "startTime",
+  });
+  return res.data.items || [];
+}
+
+export async function createEvent(title, date, startTime, durationMinutes, attendees) {
+  const service = await getCalendarService();
+  const startDt = new Date(`${date}T${startTime}:00Z`);
+  const endDt = new Date(startDt.getTime() + durationMinutes * 60000);
+  const event = {
+    summary: title,
+    start: { dateTime: startDt.toISOString(), timeZone: "UTC" },
+    end: { dateTime: endDt.toISOString(), timeZone: "UTC" },
+    attendees: attendees.map((email) => ({ email })),
+  };
+  const res = await service.events.insert({
+    calendarId: "primary",
+    requestBody: event,
+    sendUpdates: "all",
+  });
+  return res.data.htmlLink || "Event created.";
+}
+```
+
+:::
+
 ### Agent Tools
 
-```python
+::: code-group
+
+```python [Python]
 # tools.py
 from langchain_core.tools import tool
 from calendar_utils import list_events, create_event
@@ -419,9 +710,63 @@ def book_meeting(title: str, date: str, start_time: str, duration_minutes: int, 
     return f"Meeting booked. Link: {link}"
 ```
 
+```javascript [Node.js]
+// tools.js
+// npm install @langchain/core zod
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+import { listEvents, createEvent } from "./calendar_utils.js";
+
+export const checkAvailability = tool(
+  async ({ date }) => {
+    const events = await listEvents(date);
+    if (!events.length) return `No events on ${date}. Fully available.`;
+    const busy = events.map((e) => ({
+      title: e.summary || "Busy",
+      start: e.start?.dateTime || e.start?.date,
+      end: e.end?.dateTime || e.end?.date,
+    }));
+    return JSON.stringify(busy, null, 2);
+  },
+  {
+    name: "check_availability",
+    description:
+      "Check what time slots are available on a given date (YYYY-MM-DD). " +
+      "Returns busy times and free slots in 1-hour blocks.",
+    schema: z.object({ date: z.string() }),
+  }
+);
+
+export const bookMeeting = tool(
+  async ({ title, date, start_time, duration_minutes, attendees }) => {
+    const emailList = attendees.split(",").map((e) => e.trim());
+    const link = await createEvent(title, date, start_time, duration_minutes, emailList);
+    return `Meeting booked. Link: ${link}`;
+  },
+  {
+    name: "book_meeting",
+    description:
+      "Book a meeting on the calendar. " +
+      "title: meeting title, date: YYYY-MM-DD, start_time: HH:MM 24-hour, " +
+      "duration_minutes: how long, attendees: comma-separated emails.",
+    schema: z.object({
+      title: z.string(),
+      date: z.string(),
+      start_time: z.string(),
+      duration_minutes: z.number(),
+      attendees: z.string(),
+    }),
+  }
+);
+```
+
+:::
+
 ### The Agent
 
-```python
+::: code-group
+
+```python [Python]
 # agent.py
 from langchain import hub
 from langchain.agents import create_react_agent, AgentExecutor
@@ -440,6 +785,32 @@ if __name__ == "__main__":
     result = executor.invoke({"input": user_input})
     print("\n", result["output"])
 ```
+
+```javascript [Node.js]
+// agent.js
+// npm install langchain @langchain/openai
+import { ChatOpenAI } from "@langchain/openai";
+import { createReactAgent, AgentExecutor } from "langchain/agents";
+import { pull } from "langchain/hub";
+import { checkAvailability, bookMeeting } from "./tools.js";
+import * as readline from "readline";
+
+const llm = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+const tools = [checkAvailability, bookMeeting];
+
+const prompt = await pull("hwchase17/react");
+const agent = await createReactAgent({ llm, tools, prompt });
+const executor = new AgentExecutor({ agent, tools, verbose: true, maxIterations: 6 });
+
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+rl.question("What would you like to schedule? > ", async (userInput) => {
+  rl.close();
+  const result = await executor.invoke({ input: userInput });
+  console.log("\n", result.output);
+});
+```
+
+:::
 
 ### What Just Happened?
 
@@ -463,7 +834,9 @@ The agent checked availability first, then booked — without you writing a sing
 
 Modern models can call multiple tools at once instead of waiting for each result sequentially. This cuts latency dramatically.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
@@ -491,6 +864,48 @@ for call in response.tool_calls:
 # get_weather  {"city": "Tokyo"}
 # get_news     {"topic": "AI"}
 ```
+
+```javascript [Node.js]
+// npm install @langchain/openai zod
+import { ChatOpenAI } from "@langchain/openai";
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+
+const llm = new ChatOpenAI({ model: "gpt-4o" });
+
+const getWeather = tool(
+  async ({ city }) => `72°F in ${city}`,
+  {
+    name: "get_weather",
+    description: "Get weather for a city.",
+    schema: z.object({ city: z.string() }),
+  }
+);
+
+const getNews = tool(
+  async ({ topic }) => `Latest on ${topic}: markets are up.`,
+  {
+    name: "get_news",
+    description: "Get latest news on a topic.",
+    schema: z.object({ topic: z.string() }),
+  }
+);
+
+const llmWithTools = llm.bindTools([getWeather, getNews]);
+
+// Model fires both tool calls simultaneously
+const response = await llmWithTools.invoke(
+  "What is the weather in Tokyo and what is the latest news on AI?"
+);
+
+for (const call of response.tool_calls) {
+  console.log(call.name, call.args);
+}
+// get_weather  { city: 'Tokyo' }
+// get_news     { topic: 'AI' }
+```
+
+:::
 
 Use parallel calls for independent operations. Keep them sequential when the output of one tool is the input of another.
 

@@ -48,7 +48,9 @@ pip install fastapi uvicorn langchain-openai langgraph pydantic
 
 Start simple. One endpoint. One agent. Confirm it works before adding complexity.
 
-```python
+::: code-group
+
+```python [Python]
 # api.py
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -92,6 +94,78 @@ def run_agent(request: RunRequest):
     return RunResponse(output=result["output"], thread_id=request.thread_id)
 ```
 
+```javascript [Node.js]
+// api.mjs
+import express from "express";
+import OpenAI from "openai";
+
+const app = express();
+app.use(express.json());
+
+const openai = new OpenAI();
+
+// Simulate a tool
+function searchWeb(query) {
+  return `Top result for '${query}': AI agent frameworks are growing rapidly in 2025.`;
+}
+
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "search_web",
+      description: "Search the web for current information on a topic.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  },
+];
+
+async function runAgent(input) {
+  const messages = [{ role: "user", content: input }];
+  for (let i = 0; i < 5; i++) {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages,
+      tools,
+    });
+    const msg = response.choices[0].message;
+    messages.push(msg);
+    if (response.choices[0].finish_reason === "stop") {
+      return msg.content;
+    }
+    for (const call of msg.tool_calls ?? []) {
+      const result =
+        call.function.name === "search_web"
+          ? searchWeb(JSON.parse(call.function.arguments).query)
+          : "Unknown tool";
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: result,
+      });
+    }
+  }
+  return messages[messages.length - 1].content ?? "";
+}
+
+app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+app.post("/run", async (req, res) => {
+  const { input, thread_id } = req.body;
+  const output = await runAgent(input);
+  res.json({ output, thread_id: thread_id ?? null });
+});
+
+app.listen(8000, () => console.log("Server running on port 8000"));
+// node api.mjs
+```
+
+:::
+
 ```bash
 uvicorn api:app --reload --port 8000
 ```
@@ -117,7 +191,9 @@ sequenceDiagram
 
 For a chat agent that remembers context across turns, pass a `thread_id`. LangGraph uses it to look up the checkpoint for that conversation.
 
-```python
+::: code-group
+
+```python [Python]
 # stateful_api.py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -167,6 +243,46 @@ def chat(request: ChatRequest):
     return ChatResponse(reply=reply, thread_id=thread_id)
 ```
 
+```javascript [Node.js]
+// stateful_api.mjs
+import express from "express";
+import OpenAI from "openai";
+import { randomUUID } from "crypto";
+
+const app = express();
+app.use(express.json());
+
+const openai = new OpenAI();
+
+// In-memory thread store (use Redis/DB in production)
+const threads = new Map();
+
+app.post("/chat", async (req, res) => {
+  const { message, thread_id } = req.body;
+  const threadId = thread_id ?? randomUUID();
+
+  const history = threads.get(threadId) ?? [];
+  history.push({ role: "user", content: message });
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.5,
+    messages: history,
+  });
+
+  const reply = response.choices[0].message.content;
+  history.push({ role: "assistant", content: reply });
+  threads.set(threadId, history);
+
+  res.json({ reply, thread_id: threadId });
+});
+
+app.listen(8000, () => console.log("Server running on port 8000"));
+// node stateful_api.mjs
+```
+
+:::
+
 The client stores the `thread_id` and sends it on every subsequent request. The agent remembers the entire conversation. No database required — `MemorySaver` holds it in memory for development. Swap it for `SqliteSaver` or `PostgresSaver` for production persistence.
 
 ---
@@ -185,7 +301,9 @@ flowchart LR
 
 ### Streaming Endpoint with FastAPI
 
-```python
+::: code-group
+
+```python [Python]
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -213,6 +331,43 @@ def stream_agent(request: StreamRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 ```
+
+```javascript [Node.js]
+// stream_server.mjs
+import express from "express";
+import OpenAI from "openai";
+
+const app = express();
+app.use(express.json());
+const openai = new OpenAI();
+
+app.post("/stream", async (req, res) => {
+  const { input } = req.body;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("X-Accel-Buffering", "no");
+
+  const stream = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.5,
+    stream: true,
+    messages: [{ role: "user", content: input }],
+  });
+
+  for await (const chunk of stream) {
+    const token = chunk.choices[0]?.delta?.content ?? "";
+    if (token) res.write(`data: ${token}\n\n`);
+  }
+  res.write("data: [DONE]\n\n");
+  res.end();
+});
+
+app.listen(8000, () => console.log("Streaming server on port 8000"));
+// node stream_server.mjs
+```
+
+:::
 
 ### Consuming the Stream in JavaScript
 
@@ -244,7 +399,9 @@ while (true) {
 
 For full agent streaming — including tool calls and intermediate steps — LangGraph's `.astream_events()` is the right primitive.
 
-```python
+::: code-group
+
+```python [Python]
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -281,6 +438,99 @@ async def stream_agent_events(request: StreamRequest):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 ```
 
+```javascript [Node.js]
+// agent_stream.mjs
+import express from "express";
+import OpenAI from "openai";
+
+const app = express();
+app.use(express.json());
+const openai = new OpenAI();
+
+// In-memory thread store
+const threads = new Map();
+
+function searchWeb(query) {
+  return `Search results for '${query}': [simulated results]`;
+}
+
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "search_web",
+      description: "Search the web for current information.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  },
+];
+
+app.post("/agent/stream", async (req, res) => {
+  const { input, thread_id } = req.body;
+  const history = threads.get(thread_id) ?? [];
+  history.push({ role: "user", content: input });
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+
+  for (let i = 0; i < 5; i++) {
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: history,
+      tools,
+      stream: true,
+    });
+
+    let fullContent = "";
+    let toolCalls = [];
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      if (delta?.content) {
+        fullContent += delta.content;
+        res.write(`data: ${JSON.stringify({ token: delta.content })}\n\n`);
+      }
+      if (delta?.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          toolCalls[tc.index] = toolCalls[tc.index] ?? {
+            id: tc.id,
+            name: tc.function?.name ?? "",
+            args: "",
+          };
+          if (tc.function?.name) toolCalls[tc.index].name = tc.function.name;
+          if (tc.function?.arguments)
+            toolCalls[tc.index].args += tc.function.arguments;
+        }
+      }
+    }
+
+    if (toolCalls.length === 0) break;
+
+    const assistantMsg = { role: "assistant", content: fullContent, tool_calls: toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.args } })) };
+    history.push(assistantMsg);
+
+    for (const tc of toolCalls) {
+      res.write(`data: ${JSON.stringify({ tool_start: tc.name })}\n\n`);
+      const result = tc.name === "search_web" ? searchWeb(JSON.parse(tc.args).query) : "Unknown tool";
+      history.push({ role: "tool", tool_call_id: tc.id, content: result });
+    }
+  }
+
+  threads.set(thread_id, history);
+  res.write("data: [DONE]\n\n");
+  res.end();
+});
+
+app.listen(8000);
+// node agent_stream.mjs
+```
+
+:::
+
 ---
 
 ## 3. Streamlit: A Demo UI in 30 Lines
@@ -295,7 +545,9 @@ pip install streamlit requests
 
 ### Chat UI That Calls Your FastAPI Agent
 
-```python
+::: code-group
+
+```python [Python]
 # app.py
 import streamlit as st
 import requests
@@ -338,6 +590,70 @@ if prompt := st.chat_input("Ask your agent anything..."):
         st.session_state.messages.append({"role": "assistant", "content": reply})
 ```
 
+```javascript [Node.js]
+// A minimal chat UI equivalent using a simple HTML+JS frontend
+// served by an Express server that proxies to your agent API.
+// Save as chat_ui.mjs and run: node chat_ui.mjs
+
+import express from "express";
+const app = express();
+app.use(express.json());
+
+app.get("/", (_req, res) => {
+  res.send(`<!DOCTYPE html>
+<html>
+<head><title>Agent Demo</title>
+<style>
+  body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; }
+  #messages { border: 1px solid #ddd; height: 400px; overflow-y: auto; padding: 12px; margin-bottom: 12px; }
+  .user { text-align: right; margin: 8px 0; }
+  .assistant { text-align: left; margin: 8px 0; color: #333; }
+  input { width: 80%; padding: 8px; } button { padding: 8px 16px; }
+</style></head>
+<body>
+<h2>AI Agent</h2>
+<div id="messages"></div>
+<input id="input" placeholder="Ask your agent anything..." />
+<button onclick="send()">Send</button>
+<script>
+  let threadId = null;
+  async function send() {
+    const input = document.getElementById("input");
+    const msg = input.value.trim(); if (!msg) return;
+    addMsg("user", msg); input.value = "";
+    const res = await fetch("/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: msg, thread_id: threadId })
+    });
+    const data = await res.json();
+    threadId = data.thread_id;
+    addMsg("assistant", data.reply);
+  }
+  function addMsg(role, text) {
+    const div = document.createElement("div");
+    div.className = role; div.textContent = text;
+    document.getElementById("messages").appendChild(div);
+  }
+  document.getElementById("input").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+</script>
+</body></html>`);
+});
+
+app.post("/chat", async (req, res) => {
+  // Proxy to the agent API running on port 8000
+  const upstream = await fetch("http://localhost:8000/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req.body),
+  });
+  res.json(await upstream.json());
+});
+
+app.listen(8501, () => console.log("Chat UI at http://localhost:8501"));
+```
+
+:::
+
 ```bash
 streamlit run app.py
 ```
@@ -366,7 +682,9 @@ pip install chainlit langchain-openai
 
 ### Chainlit Agent App
 
-```python
+::: code-group
+
+```python [Python]
 # chainlit_app.py
 import chainlit as cl
 from langchain_openai import ChatOpenAI
@@ -404,6 +722,91 @@ async def on_message(message: cl.Message):
 
     await msg.update()
 ```
+
+```javascript [Node.js]
+// Chainlit is Python-specific. The Node.js equivalent is a custom
+// Express + SSE chat server with streaming. Run: node chainlit_equiv.mjs
+
+import express from "express";
+import OpenAI from "openai";
+import { randomUUID } from "crypto";
+
+const app = express();
+app.use(express.json());
+const openai = new OpenAI();
+const threads = new Map();
+
+function searchWeb(query) {
+  return `Search results for '${query}': [simulated results]`;
+}
+
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "search_web",
+      description: "Search the web for current information.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  },
+];
+
+app.post("/chat/stream", async (req, res) => {
+  const { message, thread_id } = req.body;
+  const tid = thread_id ?? randomUUID();
+  const history = threads.get(tid) ?? [
+    { role: "system", content: "Hello! I'm your AI agent. How can I help?" },
+  ];
+  history.push({ role: "user", content: message });
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.write(`data: ${JSON.stringify({ thread_id: tid })}\n\n`);
+
+  for (let i = 0; i < 5; i++) {
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: history,
+      tools,
+      stream: true,
+    });
+    let content = "";
+    let toolCalls = [];
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      if (delta?.content) {
+        content += delta.content;
+        res.write(`data: ${JSON.stringify({ token: delta.content })}\n\n`);
+      }
+      if (delta?.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          toolCalls[tc.index] ??= { id: tc.id, name: "", args: "" };
+          if (tc.function?.name) toolCalls[tc.index].name += tc.function.name;
+          if (tc.function?.arguments) toolCalls[tc.index].args += tc.function.arguments;
+        }
+      }
+    }
+    if (toolCalls.length === 0) break;
+    history.push({ role: "assistant", content, tool_calls: toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.args } })) });
+    for (const tc of toolCalls) {
+      const result = tc.name === "search_web" ? searchWeb(JSON.parse(tc.args).query) : "Unknown";
+      history.push({ role: "tool", tool_call_id: tc.id, content: result });
+    }
+  }
+  threads.set(tid, history);
+  res.write("data: [DONE]\n\n");
+  res.end();
+});
+
+app.listen(8000, () => console.log("Chat server on port 8000"));
+// node chainlit_equiv.mjs
+```
+
+:::
 
 ```bash
 chainlit run chainlit_app.py --watch

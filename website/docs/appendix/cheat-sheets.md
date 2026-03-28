@@ -29,9 +29,8 @@ Output format: [FORMAT DESCRIPTION]
 Input: {input}
 ```
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -50,10 +49,7 @@ chain  = prompt | llm
 result = chain.invoke({"ticket": "My password reset email never arrived."})
 print(result.content)
 ```
-
-**Node.js**
-
-```javascript
+```javascript [Node.js]
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic();
@@ -83,6 +79,7 @@ async function zeroShot(ticket) {
 const reply = await zeroShot("My password reset email never arrived.");
 console.log(reply);
 ```
+:::
 
 ---
 
@@ -104,9 +101,8 @@ Think step by step:
 Input: {input}
 ```
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(model="gpt-4o", temperature=0)
@@ -126,10 +122,7 @@ def chain_of_thought(invoice_text: str) -> str:
 result = chain_of_thought("3x Widget A @ $25 = $75, 2x Widget B @ $40 = $80, Tax $10, Total: $155")
 print(result)
 ```
-
-**Node.js**
-
-```javascript
+```javascript [Node.js]
 import OpenAI from "openai";
 
 const openai = new OpenAI();
@@ -161,6 +154,7 @@ const result = await chainOfThought(
 );
 console.log(result);
 ```
+:::
 
 ---
 
@@ -188,9 +182,8 @@ Input: {input}
 Output:
 ```
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import FewShotPromptTemplate, PromptTemplate
 
@@ -221,10 +214,7 @@ chain  = few_shot_prompt | llm
 result = chain.invoke({"input": "My API key stopped working after upgrading my plan."})
 print(result.content)  # "technical"
 ```
-
-**Node.js**
-
-```javascript
+```javascript [Node.js]
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic();
@@ -260,6 +250,7 @@ console.log(
   await fewShotClassify("My API key stopped working after upgrading my plan."),
 );
 ```
+:::
 
 ---
 
@@ -285,9 +276,8 @@ Final Answer: [your answer]
 Question: {input}
 ```
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain import hub
@@ -315,10 +305,7 @@ result = executor.invoke({
 })
 print(result["output"])
 ```
-
-**Node.js**
-
-```javascript
+```javascript [Node.js]
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic();
@@ -398,6 +385,7 @@ const answer = await reactAgent(
 );
 console.log(answer);
 ```
+:::
 
 ---
 
@@ -405,9 +393,8 @@ console.log(answer);
 
 Run the same prompt N times at high temperature, return the majority answer. Best for classification and factual lookups where one wrong answer is costly.
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 from collections import Counter
 
@@ -424,10 +411,7 @@ result = self_consistent(
     n=5
 )
 ```
-
-**Node.js**
-
-```javascript
+```javascript [Node.js]
 import OpenAI from "openai";
 
 const openai = new OpenAI();
@@ -460,6 +444,7 @@ const result = await selfConsistent(
     "Reply with ONLY ONE word: billing, technical, account, or faq.",
 );
 ```
+:::
 
 ---
 
@@ -467,9 +452,8 @@ const result = await selfConsistent(
 
 Force the model to return typed, validated data instead of freeform text.
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -494,10 +478,7 @@ result = structured.invoke(
 print(result.invoice_number)  # INV-2025-0042
 print(result.total_amount)    # 1250.0
 ```
-
-**Node.js**
-
-```javascript
+```javascript [Node.js]
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
@@ -541,6 +522,7 @@ const invoice = await extractInvoice(
 console.log(invoice.invoice_number); // INV-2025-0042
 console.log(invoice.total_amount); // 1250
 ```
+:::
 
 ---
 
@@ -548,9 +530,8 @@ console.log(invoice.total_amount); // 1250
 
 Apply a list of principles to an output sequentially, revising at each violation.
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -584,10 +565,7 @@ def apply_constitution(text: str, customer_name: str = "") -> str:
             current = result.revised
     return current
 ```
-
-**Node.js**
-
-````javascript
+```javascript [Node.js]
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic();
@@ -631,7 +609,8 @@ async function applyConstitution(text, customerName = "") {
 
   return current;
 }
-````
+```
+:::
 
 ---
 
@@ -639,9 +618,8 @@ async function applyConstitution(text, customerName = "") {
 
 The agent builds a growing list of lessons from past failures, carried into every subsequent attempt.
 
-**Python**
-
-```python
+::: code-group
+```python [Python]
 from langchain_openai import ChatOpenAI
 
 llm    = ChatOpenAI(model="gpt-4o", temperature=0.5)
@@ -679,10 +657,7 @@ def reflexion(task: str, max_attempts: int = 4) -> str:
 
 result = reflexion("Write a Python function that validates an ISO 8601 date string.")
 ```
-
-**Node.js**
-
-```javascript
+```javascript [Node.js]
 import OpenAI from "openai";
 
 const openai = new OpenAI();
@@ -731,6 +706,7 @@ async function reflexion(task, maxAttempts = 4) {
   return lastOutput;
 }
 ```
+:::
 
 ---
 
@@ -768,9 +744,8 @@ async function reflexion(task, maxAttempts = 4) {
 | **Telegram Bot API**      | Messaging bot                | Customer-facing chat agents, notifications            | core.telegram.org/bots                |
 | **WhatsApp Business API** | WhatsApp messaging           | Customer support in markets where WA dominates        | developers.facebook.com/docs/whatsapp |
 
-**Python snippet — Slack alert on escalation:**
-
-```python
+::: code-group
+```python [Python]
 from slack_sdk import WebClient
 
 slack = WebClient(token=SLACK_BOT_TOKEN)
@@ -788,10 +763,7 @@ def send_escalation_alert(ticket_id: str, reason: str, channel: str = "#support-
         ]
     )
 ```
-
-**Node.js snippet — Slack alert:**
-
-```javascript
+```javascript [Node.js]
 import { WebClient } from "@slack/web-api";
 
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
@@ -820,6 +792,7 @@ async function sendEscalationAlert(
   });
 }
 ```
+:::
 
 ---
 
@@ -836,9 +809,8 @@ async function sendEscalationAlert(
 | **Firecrawl**        | Crawl entire sites to markdown | Knowledge base ingestion, site audits           | firecrawl.dev        |
 | **Diffbot**          | Entity and article extraction  | Structured data from news, company pages        | diffbot.com          |
 
-**Python snippet — Tavily search tool:**
-
-```python
+::: code-group
+```python [Python]
 from tavily import TavilyClient
 from langchain_core.tools import tool
 
@@ -853,10 +825,7 @@ def search_web(query: str) -> str:
         for r in results["results"]
     )
 ```
-
-**Node.js snippet — Tavily search:**
-
-```javascript
+```javascript [Node.js]
 import { tavily } from "@tavily/core";
 
 const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
@@ -868,6 +837,7 @@ async function searchWeb(query) {
     .join("\n\n");
 }
 ```
+:::
 
 ---
 
@@ -896,9 +866,8 @@ async function searchWeb(query) {
 | **Cal.com API**                | Open-source scheduling           | Self-hosted booking agents                                 | cal.com/docs/api               |
 | **Nylas**                      | Unified calendar + email API     | Multi-provider scheduling without per-provider integration | developer.nylas.com            |
 
-**Python snippet — Google Calendar availability check:**
-
-```python
+::: code-group
+```python [Python]
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from datetime import datetime, timedelta, timezone
@@ -937,6 +906,45 @@ def get_free_slots(date: str, duration_minutes: int = 30) -> list[str]:
 
     return slots
 ```
+```javascript [Node.js]
+// npm install googleapis
+import { google } from "googleapis";
+
+async function getFreeSlots(date, durationMinutes = 30) {
+  const auth    = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/calendar.readonly"] });
+  const calendar = google.calendar({ version: "v3", auth });
+
+  const dayStart = `${date}T09:00:00Z`;
+  const dayEnd   = `${date}T17:00:00Z`;
+
+  const { data } = await calendar.events.list({
+    calendarId: "primary",
+    timeMin: dayStart,
+    timeMax: dayEnd,
+    singleEvents: true,
+    orderBy: "startTime",
+  });
+
+  const busyTimes = (data.items || []).map((e) => ({
+    start: new Date(e.start.dateTime),
+    end:   new Date(e.end.dateTime),
+  }));
+
+  const slots     = [];
+  let   current   = new Date(dayStart);
+  const endOfDay  = new Date(dayEnd);
+
+  while (new Date(current.getTime() + durationMinutes * 60000) <= endOfDay) {
+    const slotEnd = new Date(current.getTime() + durationMinutes * 60000);
+    const isFree  = busyTimes.every((b) => slotEnd <= b.start || current >= b.end);
+    if (isFree) slots.push(current.toISOString().slice(11, 16));
+    current = new Date(current.getTime() + 30 * 60000);
+  }
+
+  return slots;
+}
+```
+:::
 
 ---
 
@@ -965,9 +973,8 @@ def get_free_slots(date: str, duration_minutes: int = 30) -> list[str]:
 | **Alpha Vantage**  | Stock and forex data              | Market monitoring agents, portfolio tracking               | alphavantage.co/documentation   |
 | **CoinGecko API**  | Crypto market data                | Crypto portfolio agents, price alerts                      | coingecko.com/api/documentation |
 
-**Python snippet — Stripe refund tool:**
-
-```python
+::: code-group
+```python [Python]
 import stripe
 from langchain_core.tools import tool
 
@@ -993,10 +1000,7 @@ def process_refund(payment_intent_id: str, amount_cents: int, reason: str) -> st
     except stripe.error.StripeError as e:
         return f"Refund failed: {e.user_message}"
 ```
-
-**Node.js snippet — Stripe refund:**
-
-```javascript
+```javascript [Node.js]
 import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -1017,6 +1021,7 @@ async function processRefund(paymentIntentId, amountCents, reason) {
   }
 }
 ```
+:::
 
 ---
 
@@ -1033,9 +1038,8 @@ async function processRefund(paymentIntentId, amountCents, reason) {
 | **PlanetScale API** | Serverless MySQL           | Agent database operations                           | planetscale.com/docs/reference                |
 | **Redis**           | In-memory data store       | Agent session cache, rate limiting, pub/sub         | redis.io/docs                                 |
 
-**Python snippet — GitHub issue triage tool:**
-
-```python
+::: code-group
+```python [Python]
 from github import Github
 from langchain_core.tools import tool
 
@@ -1058,6 +1062,36 @@ def add_issue_label(issue_number: int, label: str) -> str:
     issue.add_to_labels(label)
     return f"Label '{label}' added to issue #{issue_number}"
 ```
+```javascript [Node.js]
+// npm install @octokit/rest
+import { Octokit } from "@octokit/rest";
+
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const OWNER = "your-org";
+const REPO  = "your-repo";
+
+async function getOpenIssues(label = "", limit = 10) {
+  const params = { owner: OWNER, repo: REPO, state: "open", per_page: limit };
+  if (label) params.labels = label;
+
+  const { data } = await octokit.issues.listForRepo(params);
+  if (data.length === 0) return "No open issues found.";
+  return data
+    .map((i) => `#${i.number}: ${i.title} (opened ${i.created_at.slice(0, 10)})`)
+    .join("\n");
+}
+
+async function addIssueLabel(issueNumber, label) {
+  await octokit.issues.addLabels({
+    owner: OWNER,
+    repo:  REPO,
+    issue_number: issueNumber,
+    labels: [label],
+  });
+  return `Label '${label}' added to issue #${issueNumber}`;
+}
+```
+:::
 
 ---
 

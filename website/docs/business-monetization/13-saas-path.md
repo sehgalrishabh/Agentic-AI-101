@@ -82,7 +82,9 @@ The model is general. Your data makes it specific.
 
 A "Legal Contract Reviewer for Real Estate Agents" has access to thousands of real estate contracts, common clause patterns, jurisdiction-specific requirements, and historical dispute data. A general LLM does not. You curate, structure, and maintain that data. That curation is the moat.
 
-```python
+::: code-group
+
+```python [Python]
 # General LLM: can review any contract but knows nothing specific
 general_review = llm.invoke("Review this contract for issues.")
 
@@ -92,6 +94,28 @@ domain_review = rag_chain.invoke(
     context=retrieve_from_domain_kb(contract_text, domain="real_estate_residential")
 )
 ```
+
+```javascript [Node.js]
+// General LLM: can review any contract but knows nothing specific
+const generalReview = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "Review this contract for issues." }],
+});
+
+// Moated product: augmented with your curated domain knowledge
+async function domainReview(contractText, domain) {
+  const context = await retrieveFromDomainKb(contractText, domain);
+  return openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: `You are a specialist contract reviewer. Use this domain knowledge:\n\n${context}` },
+      { role: "user", content: `Review this contract for issues:\n\n${contractText}` },
+    ],
+  });
+}
+```
+
+:::
 
 Sources of proprietary data:
 
@@ -130,7 +154,9 @@ Every run your agent completes is a data point. Every time a human reviews an ou
 
 Build feedback loops into your product from day one:
 
-```python
+::: code-group
+
+```python [Python]
 # Every time a human reviews agent output, log the signal
 def log_feedback(
     run_id: str,
@@ -151,6 +177,26 @@ def log_feedback(
         "timestamp":      datetime.utcnow().isoformat()
     })
 ```
+
+```javascript [Node.js]
+// Every time a human reviews agent output, log the signal
+async function logFeedback(runId, output, humanVerdict, editedOutput = null) {
+  // Store in your database
+  // Use monthly to:
+  //   - Identify prompt weaknesses
+  //   - Build fine-tuning datasets
+  //   - Track quality trend over time
+  await db.insert("feedback_log", {
+    run_id: runId,
+    output,
+    verdict: humanVerdict,
+    edited_output: editedOutput,
+    timestamp: new Date().toISOString(),
+  });
+}
+```
+
+:::
 
 Six months of feedback is a moat. Two years of feedback is a fortress.
 
@@ -233,7 +279,9 @@ A single-tenant freelance build and a multi-tenant SaaS product have different a
 
 Every tenant (customer) must be isolated from every other. Their data, their agent configuration, their retrieved documents — none of it should ever appear in another customer's context.
 
-```python
+::: code-group
+
+```python [Python]
 from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -264,13 +312,58 @@ def run_agent(request: RunRequest, tenant_id: str = Depends(get_tenant_id)):
     return agent.invoke({"input": request.input, "config": config, "context": context})
 ```
 
+```javascript [Node.js]
+import express from "express";
+
+const app = express();
+app.use(express.json());
+
+function getTenantId(apiKey) {
+  const tenant = db.query("SELECT tenant_id FROM api_keys WHERE key = ?", apiKey);
+  if (!tenant) {
+    const err = new Error("Invalid API key");
+    err.status = 401;
+    throw err;
+  }
+  return tenant.tenant_id;
+}
+
+app.use((req, res, next) => {
+  try {
+    const apiKey = req.headers["x-api-key"];
+    req.tenantId = getTenantId(apiKey);
+    next();
+  } catch (err) {
+    res.status(err.status ?? 401).json({ detail: err.message });
+  }
+});
+
+app.post("/run", async (req, res) => {
+  const { input } = req.body;
+  const tenantId = req.tenantId;
+
+  const config = await loadTenantConfig(tenantId);
+
+  // Retrieve from this tenant's knowledge base ONLY
+  // CRITICAL: always filter by tenantId
+  const context = await vectorstore.similaritySearch(input, 5, { tenant_id: tenantId });
+
+  const output = await runAgent({ input, config, context });
+  res.json({ output });
+});
+```
+
+:::
+
 Never skip the `filter={"tenant_id": tenant_id}` on retrieval. This is the most common multi-tenancy data leak in RAG-based SaaS products.
 
 ### Tenant Configuration System
 
 Each customer configures the agent to their needs without touching code.
 
-```python
+::: code-group
+
+```python [Python]
 from pydantic import BaseModel
 from typing import Optional
 
@@ -290,11 +383,36 @@ def load_tenant_config(tenant_id: str) -> TenantConfig:
     return TenantConfig(**row)
 ```
 
+```javascript [Node.js]
+// Plain JS object — use Zod for validation if desired
+async function loadTenantConfig(tenantId) {
+  const row = await db.query(
+    "SELECT * FROM tenant_configs WHERE tenant_id = ?",
+    tenantId,
+  );
+  return {
+    tenant_id: row.tenant_id,
+    product_name: row.product_name,
+    agent_persona: row.agent_persona,
+    escalation_email: row.escalation_email,
+    confidence_threshold: row.confidence_threshold,
+    allowed_actions: JSON.parse(row.allowed_actions),
+    knowledge_base_id: row.knowledge_base_id,
+    max_response_length: row.max_response_length,
+    custom_rules: row.custom_rules ?? null,
+  };
+}
+```
+
+:::
+
 ### Usage Metering
 
 SaaS pricing is often usage-based. Track what you need to bill accurately and enforce limits.
 
-```python
+::: code-group
+
+```python [Python]
 from datetime import datetime, timezone
 
 def track_usage(tenant_id: str, event_type: str, units: int = 1):
@@ -322,6 +440,32 @@ PLAN_LIMITS = {
     "pro":     {"agent_run": 50000, "documents_processed": 5000},
 }
 ```
+
+```javascript [Node.js]
+const PLAN_LIMITS = {
+  starter: { agent_run: 500, documents_processed: 50 },
+  growth: { agent_run: 5000, documents_processed: 500 },
+  pro: { agent_run: 50000, documents_processed: 5000 },
+};
+
+async function trackUsage(tenantId, eventType, units = 1) {
+  await db.insert("usage_events", {
+    tenant_id: tenantId,
+    event_type: eventType,
+    units,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+async function checkUsageLimit(tenantId, eventType) {
+  const plan = await getTenantPlan(tenantId);
+  const limit = PLAN_LIMITS[plan]?.[eventType] ?? Infinity;
+  const current = await getMonthlyUsage(tenantId, eventType);
+  return current < limit;
+}
+```
+
+:::
 
 ---
 
@@ -398,7 +542,9 @@ flowchart TD
   T --> R
 ```
 
-```python
+::: code-group
+
+```python [Python]
 # Track onboarding progress per tenant
 ONBOARDING_STEPS = [
     "integration_connected",
@@ -419,6 +565,31 @@ def get_onboarding_status(tenant_id: str) -> dict:
         "percent_complete": len(completed_steps) / len(ONBOARDING_STEPS) * 100
     }
 ```
+
+```javascript [Node.js]
+const ONBOARDING_STEPS = [
+  "integration_connected",
+  "knowledge_base_uploaded",
+  "first_run_completed",
+  "first_run_approved",
+  "live_mode_enabled",
+];
+
+async function getOnboardingStatus(tenantId) {
+  const rows = await db.query(
+    "SELECT step FROM onboarding_events WHERE tenant_id = ?",
+    tenantId,
+  );
+  const completedSteps = new Set(rows.map((r) => r.step));
+  return {
+    completed: ONBOARDING_STEPS.filter((s) => completedSteps.has(s)),
+    next_step: ONBOARDING_STEPS.find((s) => !completedSteps.has(s)) ?? null,
+    percent_complete: (completedSteps.size / ONBOARDING_STEPS.length) * 100,
+  };
+}
+```
+
+:::
 
 Show the onboarding progress bar on every page until it is complete. Send an automated email for each step not completed after 24 hours. Most churn in the first 30 days is an onboarding failure, not a product failure.
 

@@ -52,7 +52,9 @@ Three agents. One quality gate. The classifier routes. The resolver and billing 
 
 ### The State
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict, Optional
 from enum import Enum
 
@@ -75,9 +77,47 @@ class SupportState(TypedDict):
     sent:         bool
 ```
 
+```javascript [Node.js]
+// State is a plain object passed through each node function.
+// TypeScript users can define an interface for type safety.
+
+/**
+ * @typedef {Object} SupportState
+ * @property {string} ticket_id
+ * @property {string} customer_id
+ * @property {string} subject
+ * @property {string} body
+ * @property {string} category
+ * @property {string} draft_reply
+ * @property {number} confidence
+ * @property {boolean} escalated
+ * @property {string} escalation_reason
+ * @property {boolean} sent
+ */
+
+function initialState(ticketId, customerId, subject, body) {
+  return {
+    ticket_id: ticketId,
+    customer_id: customerId,
+    subject,
+    body,
+    category: "",
+    draft_reply: "",
+    confidence: 0,
+    escalated: false,
+    escalation_reason: "",
+    sent: false,
+  };
+}
+```
+
+:::
+
 ### The Tools
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_core.tools import tool
 from pydantic import BaseModel
 
@@ -116,9 +156,63 @@ def get_ticket_history(customer_id: str) -> str:
     return f"Customer {customer_id} last 3 tickets: [2025-06-01: billing question], [2025-05-15: login issue - resolved]"
 ```
 
+```javascript [Node.js]
+// Tool definitions for the OpenAI function-calling interface
+const supportTools = [
+  {
+    type: "function",
+    function: {
+      name: "search_knowledge_base",
+      description: "Search the support knowledge base for relevant articles, FAQs, and troubleshooting guides.",
+      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_customer_plan",
+      description: "Get the current subscription plan and status for a customer.",
+      parameters: { type: "object", properties: { customer_id: { type: "string" } }, required: ["customer_id"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "apply_refund",
+      description: "Apply a refund under $50 to a customer account. Escalate larger refunds.",
+      parameters: {
+        type: "object",
+        properties: {
+          customer_id: { type: "string" },
+          amount_usd: { type: "number" },
+          reason: { type: "string" },
+        },
+        required: ["customer_id", "amount_usd", "reason"],
+      },
+    },
+  },
+];
+
+function executeTool(name, args) {
+  if (name === "search_knowledge_base")
+    return `Knowledge base results for '${args.query}': [article 1], [article 2], [article 3]`;
+  if (name === "get_customer_plan")
+    return `Customer ${args.customer_id}: Pro plan, active, renews 2025-08-01, $99/mo`;
+  if (name === "apply_refund") {
+    if (args.amount_usd > 50) return `ESCALATE: Refund of $${args.amount_usd} exceeds automated limit.`;
+    return `Refund of $${args.amount_usd} applied to ${args.customer_id}. Reason: ${args.reason}`;
+  }
+  return "Unknown tool";
+}
+```
+
+:::
+
 ### The Agents (Nodes)
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 from langchain.agents import create_react_agent, AgentExecutor
@@ -209,9 +303,82 @@ def send_reply(state: SupportState) -> dict:
     return {"sent": True}
 ```
 
+```javascript [Node.js]
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+async function runAgentLoop(systemPrompt, userPrompt, tools, maxIterations = 4) {
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ];
+  for (let i = 0; i < maxIterations; i++) {
+    const response = await openai.chat.completions.create({ model: "gpt-4o", messages, tools });
+    const msg = response.choices[0].message;
+    messages.push(msg);
+    if (response.choices[0].finish_reason === "stop") return msg.content;
+    for (const call of msg.tool_calls ?? []) {
+      const result = executeTool(call.function.name, JSON.parse(call.function.arguments));
+      messages.push({ role: "tool", tool_call_id: call.id, content: result });
+    }
+  }
+  return messages[messages.length - 1].content ?? "";
+}
+
+async function classifier(state) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content: `Classify this support ticket.\nSubject: ${state.subject}\nBody: ${state.body}\n\nCategories: faq, billing, technical, unknown\nRespond with JSON: {"category": "...", "confidence": 0.0-1.0}`,
+    }],
+  });
+  return JSON.parse(response.choices[0].message.content);
+}
+
+async function resolver(state) {
+  const draft_reply = await runAgentLoop(
+    "You are a helpful support agent.",
+    `Write a helpful, friendly support reply to this ticket.\nSubject: ${state.subject}\nBody: ${state.body}\nUse the knowledge base. Keep under 200 words.`,
+    supportTools
+  );
+  return { draft_reply };
+}
+
+async function billingAgent(state) {
+  const draft_reply = await runAgentLoop(
+    "You are a billing support agent.",
+    `Handle this billing ticket for customer ${state.customer_id}.\nSubject: ${state.subject}\nBody: ${state.body}\nCheck plan first. Only apply refunds under $50.`,
+    supportTools
+  );
+  return { draft_reply };
+}
+
+async function qualityGate(state) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content: `Review this support reply.\nTicket: ${state.body}\nDraft: ${state.draft_reply}\nRespond with JSON: {"approved": bool, "confidence": 0.0-1.0, "reason": "..."}`,
+    }],
+  });
+  const result = JSON.parse(response.choices[0].message.content);
+  return { confidence: result.confidence, escalated: !result.approved, escalation_reason: result.reason };
+}
+```
+
+:::
+
 ### Routing and Graph
 
-```python
+::: code-group
+
+```python [Python]
 from langgraph.graph import StateGraph, END
 
 def route_category(state: SupportState) -> str:
@@ -246,6 +413,42 @@ graph.add_edge("escalate",   END)
 support_agent = graph.compile()
 ```
 
+```javascript [Node.js]
+// Lightweight graph runner without a framework
+async function runSupportAgent(state) {
+  // Step 1: Classify
+  const classification = await classifier(state);
+  Object.assign(state, classification);
+
+  // Step 2: Route to specialist
+  if (state.category === "faq") {
+    Object.assign(state, await resolver(state));
+  } else if (state.category === "billing") {
+    Object.assign(state, await billingAgent(state));
+  } else {
+    state.escalated = true;
+    state.escalation_reason = "Unknown category";
+  }
+
+  // Step 3: Quality gate (if not already escalated)
+  if (!state.escalated && state.draft_reply) {
+    Object.assign(state, await qualityGate(state));
+  }
+
+  // Step 4: Send or escalate
+  if (!state.escalated) {
+    console.log(`[send] Reply sent for ticket ${state.ticket_id}`);
+    state.sent = true;
+  } else {
+    console.log(`[escalate] Ticket ${state.ticket_id} → human queue. Reason: ${state.escalation_reason}`);
+  }
+
+  return state;
+}
+```
+
+:::
+
 ### The Pitch to a Client
 
 > "Your team spends $4,000 per day handling 500 tickets. We automate the 300 that do not need a human. That is $2,400 per day — $50,000 per month — in saved labor. Our system costs a fraction of that and improves average response time from 4 hours to 30 seconds for the easy cases."
@@ -278,7 +481,9 @@ flowchart TD
 
 ### The State
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict, Optional
 
 class LeadState(TypedDict):
@@ -296,9 +501,32 @@ class LeadState(TypedDict):
     revision_count:   int
 ```
 
+```javascript [Node.js]
+function initialLeadState(row) {
+  return {
+    lead_id: row.id,
+    first_name: row.first_name,
+    last_name: row.last_name,
+    email: row.email,
+    company: row.company,
+    title: row.title,
+    linkedin_url: row.linkedin_url ?? null,
+    company_news: "",
+    prospect_profile: "",
+    email_draft: "",
+    approved: false,
+    revision_count: 0,
+  };
+}
+```
+
+:::
+
 ### The Tools
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_core.tools import tool
 
 @tool
@@ -327,9 +555,46 @@ def check_email_deliverability(email: str) -> str:
     return f"{email}: valid, deliverable, no spam flags"
 ```
 
+```javascript [Node.js]
+const leadTools = [
+  {
+    type: "function",
+    function: {
+      name: "search_company_news",
+      description: "Search for recent news, funding, or product launches for a company.",
+      parameters: { type: "object", properties: { company_name: { type: "string" } }, required: ["company_name"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_linkedin_profile",
+      description: "Search for a person's LinkedIn profile to personalize outreach.",
+      parameters: {
+        type: "object",
+        properties: { full_name: { type: "string" }, company: { type: "string" } },
+        required: ["full_name", "company"],
+      },
+    },
+  },
+];
+
+function executeLeadTool(name, args) {
+  if (name === "search_company_news")
+    return `Recent news for ${args.company_name}: [Series B announcement], [new product launch], [key hire]`;
+  if (name === "search_linkedin_profile")
+    return `${args.full_name} at ${args.company}: 3 years in role, posts about AI automation, background in ops`;
+  return "Unknown tool";
+}
+```
+
+:::
+
 ### The Agents
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
@@ -399,9 +664,62 @@ def route_quality(state: LeadState) -> str:
     return "revise"
 ```
 
+```javascript [Node.js]
+async function enrichmentAgent(state) {
+  const messages = [
+    { role: "system", content: "You are a B2B research agent." },
+    {
+      role: "user",
+      content: `Research this prospect and build a brief profile.\nName: ${state.first_name} ${state.last_name}\nTitle: ${state.title}\nCompany: ${state.company}\nFind: 1 recent company news item and 1-2 personal details for outreach.`,
+    },
+  ];
+  for (let i = 0; i < 4; i++) {
+    const response = await openai.chat.completions.create({ model: "gpt-4o", messages, tools: leadTools });
+    const msg = response.choices[0].message;
+    messages.push(msg);
+    if (response.choices[0].finish_reason === "stop") return { prospect_profile: msg.content };
+    for (const call of msg.tool_calls ?? []) {
+      messages.push({ role: "tool", tool_call_id: call.id, content: executeLeadTool(call.function.name, JSON.parse(call.function.arguments)) });
+    }
+  }
+  return { prospect_profile: messages[messages.length - 1].content ?? "" };
+}
+
+async function emailWriter(state) {
+  const feedback = state.revision_count > 0 ? `\n\nFix this: ${state.email_draft}` : "";
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.4,
+    messages: [{
+      role: "user",
+      content: `Write a cold outreach email using this profile.\nProfile: ${state.prospect_profile}\nSender: B2B SaaS company automating operational workflows\nRules: specific subject, personal opening, one-sentence value prop, low-friction CTA, under 120 words, peer-to-peer tone${feedback}`,
+    }],
+  });
+  return { email_draft: response.choices[0].message.content, revision_count: state.revision_count + 1 };
+}
+
+async function qualityReviewer(state) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content: `Review this cold email.\n\n${state.email_draft}\n\nReject if: generic, template-like, over 150 words, no hook, aggressive. Respond with JSON: {"approved": bool, "issues": "..."}`,
+    }],
+  });
+  const result = JSON.parse(response.choices[0].message.content);
+  return { approved: result.approved, email_draft: result.approved ? state.email_draft : result.issues };
+}
+```
+
+:::
+
 ### Graph Assembly
 
-```python
+::: code-group
+
+```python [Python]
 from langgraph.graph import StateGraph, END
 
 graph = StateGraph(LeadState)
@@ -450,6 +768,40 @@ def process_lead_list(csv_path: str) -> list[dict]:
     return results
 ```
 
+```javascript [Node.js]
+async function runOutreachAgent(state) {
+  Object.assign(state, await enrichmentAgent(state));
+  for (let i = 0; i < 3; i++) {
+    Object.assign(state, await emailWriter(state));
+    Object.assign(state, await qualityReviewer(state));
+    if (state.approved) break;
+  }
+  return state;
+}
+
+// --- Batch processing a CSV of leads ---
+import { createReadStream } from "fs";
+import { parse } from "csv-parse";
+
+async function processLeadList(csvPath) {
+  const results = [];
+  const parser = createReadStream(csvPath).pipe(parse({ columns: true }));
+  for await (const row of parser) {
+    const state = await runOutreachAgent(initialLeadState(row));
+    results.push({
+      email: row.email,
+      subject: state.email_draft.split("\n")[0].replace("Subject: ", ""),
+      body: state.email_draft,
+      approved: state.approved,
+    });
+    console.log(`${row.first_name} ${row.last_name} — approved: ${state.approved}`);
+  }
+  return results;
+}
+```
+
+:::
+
 ### The Pitch to a Client
 
 > "Your SDR spends 25 minutes per prospect. We do it in 45 seconds. For 200 leads per week that is 80 hours returned to your team — or $4,000 in SDR time — every week. We charge a setup fee and a per-lead rate. You break even on lead number seven."
@@ -484,7 +836,9 @@ flowchart TD
 
 Pydantic does the heavy lifting here. The structure of an invoice is the contract.
 
-```python
+::: code-group
+
+```python [Python]
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from decimal import Decimal
@@ -527,9 +881,40 @@ class ParsedInvoice(BaseModel):
         return v
 ```
 
+```javascript [Node.js]
+import { z } from "zod"; // npm install zod
+
+const LineItemSchema = z.object({
+  description: z.string(),
+  quantity: z.number(),
+  unit_price: z.number(),
+  total: z.number(),
+}).refine((item) => Math.abs(item.total - Math.round(item.quantity * item.unit_price * 100) / 100) <= 0.02, {
+  message: "Line item total does not match qty × price",
+});
+
+const ParsedInvoiceSchema = z.object({
+  invoice_number: z.string(),
+  invoice_date: z.string(), // YYYY-MM-DD
+  due_date: z.string().nullable().optional(),
+  vendor_name: z.string(),
+  vendor_address: z.string().nullable().optional(),
+  line_items: z.array(LineItemSchema),
+  subtotal: z.number(),
+  tax: z.number().nullable().optional(),
+  total: z.number(),
+  payment_terms: z.string().nullable().optional(),
+  currency: z.string().default("USD"),
+});
+```
+
+:::
+
 ### The Tools
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_core.tools import tool
 import base64, json
 
@@ -562,9 +947,42 @@ def flag_for_human_review(file_path: str, reason: str) -> str:
     return f"Flagged for review: {reason}"
 ```
 
+```javascript [Node.js]
+import { readFileSync } from "fs";
+import { getDocument } from "pdfjs-dist"; // npm install pdfjs-dist
+
+async function readPdfInvoice(filePath) {
+  const data = new Uint8Array(readFileSync(filePath));
+  const pdf = await getDocument({ data }).promise;
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => item.str).join(" "));
+  }
+  return pages.join("\n");
+}
+
+async function pushToErp(invoiceData) {
+  // In production: POST to your ERP API (NetSuite, SAP, QuickBooks, etc.)
+  const data = typeof invoiceData === "string" ? JSON.parse(invoiceData) : invoiceData;
+  const erpId = `INV-${data.invoice_number}-${data.invoice_date.replace(/-/g, "")}`;
+  return `ERP record created: ${erpId}`;
+}
+
+function flagForHumanReview(filePath, reason) {
+  console.log(`[human queue] ${filePath}: ${reason}`);
+  return `Flagged for review: ${reason}`;
+}
+```
+
+:::
+
 ### The Agents
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
@@ -625,9 +1043,58 @@ def erp_agent(invoice: ParsedInvoice) -> str:
     return result["output"]
 ```
 
+```javascript [Node.js]
+async function extractionAgent(filePath) {
+  const rawText = await readPdfInvoice(filePath);
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content: `Extract all invoice data from this document.\n\nDOCUMENT TEXT:\n${rawText}\n\nRules:\n- Dates: YYYY-MM-DD\n- Amounts: numbers not strings\n- Missing fields: null\n- Calculate totals from line items if not explicit\n\nRespond with a JSON object matching the ParsedInvoice schema.`,
+    }],
+  });
+  try {
+    const data = JSON.parse(response.choices[0].message.content);
+    return ParsedInvoiceSchema.parse(data);
+  } catch (e) {
+    console.log(`[extraction] Failed: ${e.message}`);
+    return null;
+  }
+}
+
+async function validationAgent(invoice) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content: `Validate this extracted invoice data.\n\n${JSON.stringify(invoice, null, 2)}\n\nCheck: valid dates, required fields present, positive amounts, line items sum to subtotal, realistic invoice number.\nRespond with JSON: {"valid": bool, "issues": [...], "fixable": bool}`,
+    }],
+  });
+  return JSON.parse(response.choices[0].message.content);
+}
+
+async function erpAgent(invoice) {
+  try {
+    const confirmation = await pushToErp(JSON.stringify(invoice));
+    return confirmation;
+  } catch (e) {
+    flagForHumanReview("unknown", `ERP push failed: ${e.message}`);
+    return `Failed: ${e.message}`;
+  }
+}
+```
+
+:::
+
 ### The Orchestrator
 
-```python
+::: code-group
+
+```python [Python]
 import os
 from pathlib import Path
 
@@ -678,6 +1145,58 @@ def process_invoice_batch(inbox_folder: str):
 # Run it
 process_invoice_batch("./invoices/inbox")
 ```
+
+```javascript [Node.js]
+import { readdirSync } from "fs";
+import { join } from "path";
+
+async function processInvoiceBatch(inboxFolder) {
+  const pdfFiles = readdirSync(inboxFolder).filter((f) => f.endsWith(".pdf"));
+  console.log(`Processing ${pdfFiles.length} invoices...`);
+
+  const results = { success: 0, human_review: 0, failed: 0 };
+
+  for (const fileName of pdfFiles) {
+    const filePath = join(inboxFolder, fileName);
+    console.log(`\n--- ${fileName} ---`);
+
+    // Step 1: Extract
+    const invoice = await extractionAgent(filePath);
+    if (!invoice) {
+      flagForHumanReview(filePath, "Extraction failed — could not parse document structure");
+      results.human_review++;
+      continue;
+    }
+
+    // Step 2: Validate
+    const validation = await validationAgent(invoice);
+    if (!validation.valid) {
+      if (validation.fixable) {
+        console.log(`  Validation issues (fixable): ${validation.issues.join(", ")}`);
+      } else {
+        flagForHumanReview(filePath, `Validation failed: ${validation.issues.join(", ")}`);
+        results.human_review++;
+      }
+      continue;
+    }
+
+    // Step 3: Push to ERP
+    const confirmation = await erpAgent(invoice);
+    console.log(`  ${confirmation}`);
+    results.success++;
+  }
+
+  console.log(`\n=== Batch Complete ===`);
+  console.log(`Success:      ${results.success}`);
+  console.log(`Human review: ${results.human_review}`);
+  console.log(`Failed:       ${results.failed}`);
+  return results;
+}
+
+processInvoiceBatch("./invoices/inbox");
+```
+
+:::
 
 ### The Pitch to a Client
 

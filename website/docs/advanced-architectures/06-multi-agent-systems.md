@@ -127,11 +127,21 @@ There are three approaches:
 
 **A. Pass results directly (simple pipelines)**
 
-```python
+::: code-group
+
+```python [Python]
 research_result = researcher_agent.invoke({"topic": "AI trends 2025"})
 draft_result    = writer_agent.invoke({"research": research_result["output"]})
 final_result    = editor_agent.invoke({"draft": draft_result["output"]})
 ```
+
+```javascript [Node.js]
+const researchResult = await researcherAgent.invoke({ topic: "AI trends 2025" });
+const draftResult    = await writerAgent.invoke({ research: researchResult.output });
+const finalResult    = await editorAgent.invoke({ draft: draftResult.output });
+```
+
+:::
 
 Clean. Simple. Works for linear pipelines. Breaks down when you need branching or loops.
 
@@ -139,7 +149,9 @@ Clean. Simple. Works for linear pipelines. Breaks down when you need branching o
 
 All agents read from and write to a shared typed state. No direct passing required. This is the production standard.
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict
 
 class CampaignState(TypedDict):
@@ -150,6 +162,33 @@ class CampaignState(TypedDict):
     final_copy: str
     approved: bool
 ```
+
+```javascript [Node.js]
+// TypeScript / JSDoc type definition for shared state
+/**
+ * @typedef {Object} CampaignState
+ * @property {string} topic
+ * @property {string} research
+ * @property {string} draft
+ * @property {string} feedback
+ * @property {string} finalCopy
+ * @property {boolean} approved
+ */
+
+// In LangGraph.js, define the state annotation:
+import { Annotation } from "@langchain/langgraph";
+
+const CampaignStateAnnotation = Annotation.Root({
+  topic:     Annotation(),
+  research:  Annotation(),
+  draft:     Annotation(),
+  feedback:  Annotation(),
+  finalCopy: Annotation(),
+  approved:  Annotation(),
+});
+```
+
+:::
 
 Every agent receives the full state, makes its contribution, and returns the updated state. The graph decides what runs next.
 
@@ -188,7 +227,9 @@ pip install langgraph langchain-openai langchain
 
 ### Minimal LangGraph Example
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
@@ -229,6 +270,51 @@ result = app.invoke({"topic": "The rise of AI agents in 2025", "research": "", "
 print(result["draft"])
 ```
 
+```javascript [Node.js]
+import { ChatOpenAI } from "@langchain/openai";
+import { StateGraph, END, START } from "@langchain/langgraph";
+import { Annotation } from "@langchain/langgraph";
+
+const StateAnnotation = Annotation.Root({
+  topic:    Annotation(),
+  research: Annotation(),
+  draft:    Annotation(),
+});
+
+const llm = new ChatOpenAI({ model: "gpt-4o", temperature: 0.3 });
+
+// Node 1: Researcher
+async function researcher(state) {
+  const result = await llm.invoke(
+    `Research this topic in 3 bullet points: ${state.topic}`
+  );
+  return { research: result.content };
+}
+
+// Node 2: Writer
+async function writer(state) {
+  const result = await llm.invoke(
+    `Write a short LinkedIn post based on this research:\n${state.research}`
+  );
+  return { draft: result.content };
+}
+
+// Build the graph
+const graph = new StateGraph(StateAnnotation)
+  .addNode("researcher", researcher)
+  .addNode("writer", writer)
+  .addEdge(START, "researcher")
+  .addEdge("researcher", "writer")
+  .addEdge("writer", END);
+
+const app = graph.compile();
+
+const result = await app.invoke({ topic: "The rise of AI agents in 2025", research: "", draft: "" });
+console.log(result.draft);
+```
+
+:::
+
 The graph runs `researcher` → `writer` → `END`. State flows through both nodes automatically.
 
 ---
@@ -255,7 +341,9 @@ flowchart TD
 
 ### The State
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict, Optional
 
 class AgencyState(TypedDict):
@@ -267,9 +355,26 @@ class AgencyState(TypedDict):
     revision_count: int
 ```
 
+```javascript [Node.js]
+import { Annotation } from "@langchain/langgraph";
+
+const AgencyStateAnnotation = Annotation.Root({
+  niche:          Annotation(),
+  trendingTopic:  Annotation(),
+  tweetDraft:     Annotation(),
+  feedback:       Annotation(),
+  approved:       Annotation(),
+  revisionCount:  Annotation(),
+});
+```
+
+:::
+
 ### The Agents (Nodes)
 
-````python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(model="gpt-4o", temperature=0.7)
@@ -321,13 +426,70 @@ def editor(state: AgencyState) -> dict:
         "approved": parsed["approved"],
         "feedback": parsed.get("feedback", "")
     }
-````
+```
+
+```javascript [Node.js]
+import { ChatOpenAI } from "@langchain/openai";
+
+const llm       = new ChatOpenAI({ model: "gpt-4o", temperature: 0.7 });
+const criticLlm = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+
+// Agent A: Researcher
+async function researcher(state) {
+  const result = await llm.invoke(
+    `Identify one specific trending topic in the '${state.niche}' space right now. ` +
+    `Give the topic name and a one-sentence context. Be specific, not generic.`
+  );
+  return { trendingTopic: result.content };
+}
+
+// Agent B: Copywriter
+async function copywriter(state) {
+  const feedbackBlock = state.feedback
+    ? `\n\nPrevious feedback to incorporate:\n${state.feedback}`
+    : "";
+
+  const result = await llm.invoke(
+    `Write a punchy, engaging tweet about this trending topic:\n${state.trendingTopic}` +
+    `${feedbackBlock}\n\n` +
+    `Rules: under 280 chars, no hashtag spam (max 2), no em-dashes, conversational tone.`
+  );
+  return {
+    tweetDraft:    result.content,
+    revisionCount: (state.revisionCount ?? 0) + 1,
+  };
+}
+
+// Agent C: Editor
+async function editor(state) {
+  const result = await criticLlm.invoke(
+    `You are a social media compliance editor. Review this tweet:\n\n` +
+    `${state.tweetDraft}\n\n` +
+    `Check for: misleading claims, overly salesy tone, excessive hashtags, bad grammar.\n` +
+    `Respond with a JSON object:\n` +
+    `{"approved": true/false, "feedback": "specific revision notes or empty string if approved"}`
+  );
+
+  // Strip markdown fences if present
+  const raw = result.content.trim().replace(/```json|```/g, "").trim();
+  const parsed = JSON.parse(raw);
+
+  return {
+    approved: parsed.approved,
+    feedback: parsed.feedback ?? "",
+  };
+}
+```
+
+:::
 
 ### The Router
 
 This is the conditional edge that decides whether to loop back or finish.
 
-```python
+::: code-group
+
+```python [Python]
 def should_revise(state: AgencyState) -> str:
     # Safety valve: never loop more than 3 times
     if state.get("revision_count", 0) >= 3:
@@ -337,9 +499,22 @@ def should_revise(state: AgencyState) -> str:
     return "revise"
 ```
 
+```javascript [Node.js]
+function shouldRevise(state) {
+  // Safety valve: never loop more than 3 times
+  if ((state.revisionCount ?? 0) >= 3) return "end";
+  if (state.approved) return "end";
+  return "revise";
+}
+```
+
+:::
+
 ### Assembling the Graph
 
-```python
+::: code-group
+
+```python [Python]
 from langgraph.graph import StateGraph, END
 
 graph = StateGraph(AgencyState)
@@ -364,9 +539,31 @@ graph.add_conditional_edges(
 agency = graph.compile()
 ```
 
+```javascript [Node.js]
+import { StateGraph, END, START } from "@langchain/langgraph";
+
+const graph = new StateGraph(AgencyStateAnnotation)
+  .addNode("researcher", researcher)
+  .addNode("copywriter", copywriter)
+  .addNode("editor",     editor)
+  .addEdge(START, "researcher")
+  .addEdge("researcher", "copywriter")
+  .addEdge("copywriter", "editor")
+  .addConditionalEdges("editor", shouldRevise, {
+    revise: "copywriter",  // loop back
+    end:    END,
+  });
+
+const agency = graph.compile();
+```
+
+:::
+
 ### Running the Agency
 
-```python
+::: code-group
+
+```python [Python]
 initial_state: AgencyState = {
     "niche": "developer tools",
     "trending_topic": "",
@@ -382,6 +579,25 @@ print("=== FINAL TWEET ===")
 print(result["tweet_draft"])
 print(f"\nApproved after {result['revision_count']} revision(s)")
 ```
+
+```javascript [Node.js]
+const initialState = {
+  niche:         "developer tools",
+  trendingTopic: "",
+  tweetDraft:    "",
+  feedback:      "",
+  approved:      false,
+  revisionCount: 0,
+};
+
+const result = await agency.invoke(initialState);
+
+console.log("=== FINAL TWEET ===");
+console.log(result.tweetDraft);
+console.log(`\nApproved after ${result.revisionCount} revision(s)`);
+```
+
+:::
 
 ### What Just Happened?
 
@@ -418,7 +634,9 @@ flowchart LR
   W --> E([End])
 ```
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 
@@ -469,6 +687,64 @@ graph.add_edge("synthesizer",      END)
 app = graph.compile()
 ```
 
+```javascript [Node.js]
+import { ChatOpenAI } from "@langchain/openai";
+import { StateGraph, END, START } from "@langchain/langgraph";
+import { Annotation } from "@langchain/langgraph";
+
+const ResearchStateAnnotation = Annotation.Root({
+  niche:         Annotation(),
+  twitterTrends: Annotation(),
+  redditTrends:  Annotation(),
+  hnTrends:      Annotation(),
+  synthesis:     Annotation(),
+  finalCopy:     Annotation(),
+});
+
+const llm = new ChatOpenAI({ model: "gpt-4o", temperature: 0.3 });
+
+async function researchTwitter(state) {
+  const result = await llm.invoke(`What's trending on Twitter/X in ${state.niche} right now?`);
+  return { twitterTrends: result.content };
+}
+
+async function researchReddit(state) {
+  const result = await llm.invoke(`What's trending on Reddit in ${state.niche} right now?`);
+  return { redditTrends: result.content };
+}
+
+async function researchHn(state) {
+  const result = await llm.invoke(`What's trending on Hacker News in ${state.niche} right now?`);
+  return { hnTrends: result.content };
+}
+
+async function synthesizer(state) {
+  const result = await llm.invoke(
+    `Synthesize these three trend reports into one key insight:\n` +
+    `Twitter: ${state.twitterTrends}\n` +
+    `Reddit: ${state.redditTrends}\n` +
+    `HN: ${state.hnTrends}`
+  );
+  return { synthesis: result.content };
+}
+
+const graph = new StateGraph(ResearchStateAnnotation)
+  .addNode("researchTwitter", researchTwitter)
+  .addNode("researchReddit",  researchReddit)
+  .addNode("researchHn",      researchHn)
+  .addNode("synthesizer",     synthesizer)
+  .addEdge(START, "researchTwitter")
+  // Fan-out: all three run in parallel
+  .addEdge("researchTwitter", "synthesizer")
+  .addEdge("researchReddit",  "synthesizer")
+  .addEdge("researchHn",      "synthesizer")
+  .addEdge("synthesizer",     END);
+
+const app = graph.compile();
+```
+
+:::
+
 > LangGraph waits for all parallel branches to complete before moving to `synthesizer`. You get the speed of parallelism with the safety of synchronization.
 
 ---
@@ -481,7 +757,9 @@ In a multi-agent system, one broken node can stall the entire pipeline. Defense 
 
 Wrap each node so a failure returns a safe fallback rather than raising an exception.
 
-```python
+::: code-group
+
+```python [Python]
 def safe_researcher(state: AgencyState) -> dict:
     try:
         result = llm.invoke(f"Research trends in: {state['niche']}")
@@ -492,11 +770,28 @@ def safe_researcher(state: AgencyState) -> dict:
         return {"trending_topic": f"General trends in {state['niche']}"}
 ```
 
+```javascript [Node.js]
+async function safeResearcher(state) {
+  try {
+    const result = await llm.invoke(`Research trends in: ${state.niche}`);
+    return { trendingTopic: result.content };
+  } catch (e) {
+    // Log and return a safe default so the graph keeps running
+    console.error(`[researcher] failed: ${e.message}`);
+    return { trendingTopic: `General trends in ${state.niche}` };
+  }
+}
+```
+
+:::
+
 ### Revision Caps
 
 Always cap feedback loops. An infinite revision cycle burns tokens and never ships.
 
-```python
+::: code-group
+
+```python [Python]
 def should_revise(state: AgencyState) -> str:
     if state.get("revision_count", 0) >= 3:
         print("[editor] Max revisions reached. Shipping current draft.")
@@ -504,11 +799,25 @@ def should_revise(state: AgencyState) -> str:
     return "end" if state["approved"] else "revise"
 ```
 
+```javascript [Node.js]
+function shouldRevise(state) {
+  if ((state.revisionCount ?? 0) >= 3) {
+    console.log("[editor] Max revisions reached. Shipping current draft.");
+    return "end";
+  }
+  return state.approved ? "end" : "revise";
+}
+```
+
+:::
+
 ### State Validation with Pydantic
 
 Catch bad state early before it propagates downstream.
 
-```python
+::: code-group
+
+```python [Python]
 from pydantic import BaseModel, validator
 
 class AgencyStateModel(BaseModel):
@@ -524,6 +833,23 @@ class AgencyStateModel(BaseModel):
             raise ValueError("niche cannot be empty")
         return v
 ```
+
+```javascript [Node.js]
+import { z } from "zod";
+
+const AgencyStateSchema = z.object({
+  niche:         z.string().min(1, "niche cannot be empty"),
+  trendingTopic: z.string().default(""),
+  tweetDraft:    z.string().default(""),
+  approved:      z.boolean().default(false),
+  revisionCount: z.number().int().default(0),
+});
+
+// Validate before kicking off the graph:
+// const state = AgencyStateSchema.parse(inputData);
+```
+
+:::
 
 ---
 

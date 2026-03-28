@@ -63,7 +63,8 @@ ollama run llama3
 
 Because Ollama exposes an OpenAI-compatible API, you swap it in with minimal code changes.
 
-```python
+::: code-group
+```python [Python]
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
@@ -77,12 +78,37 @@ cloud_llm = ChatOpenAI(model="gpt-4o", temperature=0)
 result = local_llm.invoke("Summarize the key points of transformer architecture.")
 print(result.content)
 ```
+```javascript [Node.js]
+// Ollama exposes an OpenAI-compatible API — use the openai npm package
+import OpenAI from "openai";
+
+// Local: free, private, slightly less capable
+const localClient = new OpenAI({
+  baseURL: "http://localhost:11434/v1",
+  apiKey: "ollama", // required but ignored by Ollama
+});
+
+// Cloud: paid, powerful, full capability
+const cloudClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Same interface — swap as needed
+const result = await localClient.chat.completions.create({
+  model: "llama3",
+  temperature: 0,
+  messages: [
+    { role: "user", content: "Summarize the key points of transformer architecture." },
+  ],
+});
+console.log(result.choices[0].message.content);
+```
+:::
 
 ### Building a Hybrid Router
 
 Use the local model for tasks it can handle well, the cloud model only when necessary. This pattern keeps costs near zero for the majority of tasks.
 
-```python
+::: code-group
+```python [Python]
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -117,6 +143,55 @@ def route_to_model(task: str) -> str:
 result = route_to_model("Extract all dates from this text: 'Meeting on July 4th, deadline August 1st'")
 result = route_to_model("Write a multi-step LangGraph agent that handles customer support escalations")
 ```
+```javascript [Node.js]
+import OpenAI from "openai";
+
+const localClient = new OpenAI({
+  baseURL: "http://localhost:11434/v1",
+  apiKey: "ollama",
+});
+const cloudClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+/**
+ * Use the local model to decide whether to use local or cloud.
+ * Meta: the router itself is free.
+ */
+async function routeToModel(task) {
+  const routingPrompt = `Should this task be sent to a powerful cloud AI model, or can a smaller local model handle it?
+
+Task: ${task}
+
+Use cloud for: complex multi-step reasoning, code generation from scratch, nuanced writing, tasks requiring up-to-date world knowledge.
+Use local for: summarization, classification, extraction, simple Q&A, format conversion, short drafts.
+
+Respond with JSON: { "use_cloud": true|false, "reason": "..." }`;
+
+  const routingResp = await localClient.chat.completions.create({
+    model: "llama3",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{ role: "user", content: routingPrompt }],
+  });
+
+  const decision = JSON.parse(routingResp.choices[0].message.content);
+  const client = decision.use_cloud ? cloudClient : localClient;
+  const model  = decision.use_cloud ? "gpt-4o" : "llama3";
+
+  console.log(`[router] ${decision.use_cloud ? "cloud" : "local"}: ${decision.reason}`);
+
+  const resp = await client.chat.completions.create({
+    model,
+    temperature: 0,
+    messages: [{ role: "user", content: task }],
+  });
+  return resp.choices[0].message.content;
+}
+
+// Usage
+let result = await routeToModel("Extract all dates from this text: 'Meeting on July 4th, deadline August 1st'");
+result = await routeToModel("Write a multi-step LangGraph agent that handles customer support escalations");
+```
+:::
 
 ### Model Selection by Task Type
 
@@ -135,7 +210,8 @@ result = route_to_model("Write a multi-step LangGraph agent that handles custome
 
 For clients who require on-premise deployment:
 
-```python
+::: code-group
+```python [Python]
 # on_premise_agent.py
 # Ships to the client. Runs entirely on their hardware. No API keys needed.
 
@@ -166,6 +242,64 @@ if __name__ == "__main__":
             break
         print(f"\nAnswer: {ask(q)}")
 ```
+```javascript [Node.js]
+// on_premise_agent.mjs
+// Ships to the client. Runs entirely on their hardware. No API keys needed.
+// npm install openai @xenova/transformers faiss-node readline
+
+import OpenAI from "openai";
+import { pipeline } from "@xenova/transformers";
+import faiss from "faiss-node";
+import { readFileSync, existsSync } from "fs";
+import * as readline from "readline/promises";
+
+const localClient = new OpenAI({
+  baseURL: "http://localhost:11434/v1",
+  apiKey: "ollama",
+});
+
+// Local embeddings via @xenova/transformers — no cloud call
+const embedder = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+
+async function embed(text) {
+  const output = await embedder(text, { pooling: "mean", normalize: true });
+  return Array.from(output.data);
+}
+
+// Load FAISS index and document store saved at build time
+const index = faiss.IndexFlatL2.read("./knowledge_base/index.faiss");
+const docs   = JSON.parse(readFileSync("./knowledge_base/docs.json", "utf8"));
+
+async function ask(question) {
+  // Retrieve top-3 relevant chunks
+  const qEmb = await embed(question);
+  const { labels } = index.search(qEmb, 3);
+  const context = labels.map((i) => docs[i]).join("\n\n");
+
+  const resp = await localClient.chat.completions.create({
+    model: "llama3",
+    temperature: 0,
+    messages: [
+      {
+        role: "system",
+        content: `Answer the question using only the context below.\n\nContext:\n${context}`,
+      },
+      { role: "user", content: question },
+    ],
+  });
+  return resp.choices[0].message.content;
+}
+
+// Interactive CLI loop
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+while (true) {
+  const q = (await rl.question("\nQuestion: ")).trim();
+  if (["exit", "quit"].includes(q.toLowerCase())) break;
+  console.log(`\nAnswer: ${await ask(q)}`);
+}
+rl.close();
+```
+:::
 
 This runs with zero recurring cost, zero cloud dependency, and zero data leaving the client's infrastructure. For regulated industries, this is not a nice-to-have — it is the only viable option.
 
@@ -181,7 +315,8 @@ The technology is maturing fast. Two paths dominate the current landscape.
 
 The Realtime API streams bidirectional audio directly to and from a model. No speech-to-text step, no text-to-speech step — the model processes and responds to audio natively. This produces conversation latency under 300ms, which sounds and feels like a real phone call.
 
-```python
+::: code-group
+```python [Python]
 # Voice agent using OpenAI Realtime API via WebSocket
 import asyncio
 import websockets
@@ -259,6 +394,88 @@ async def realtime_voice_agent():
                 print(f"Error: {event['error']}")
                 break
 ```
+```javascript [Node.js]
+// Voice agent using OpenAI Realtime API via WebSocket
+// npm install ws
+
+import WebSocket from "ws";
+
+async function realtimeVoiceAgent() {
+  const url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview";
+  const ws  = new WebSocket(url, {
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "OpenAI-Beta": "realtime=v1",
+    },
+  });
+
+  ws.on("open", () => {
+    // Configure the session
+    ws.send(JSON.stringify({
+      type: "session.update",
+      session: {
+        voice: "alloy",
+        instructions:
+          "You are a friendly appointment scheduling assistant for a dental clinic. " +
+          "Your goal is to collect: the patient's name, preferred date and time, " +
+          "and the type of appointment. Keep responses short and conversational.",
+        turn_detection: { type: "server_vad" }, // auto detect when user stops speaking
+        input_audio_format:  "pcm16",
+        output_audio_format: "pcm16",
+        tools: [
+          {
+            type:        "function",
+            name:        "book_appointment",
+            description: "Book a dental appointment once all details are collected.",
+            parameters: {
+              type: "object",
+              properties: {
+                patient_name:     { type: "string" },
+                date:             { type: "string" },
+                time:             { type: "string" },
+                appointment_type: { type: "string" },
+              },
+              required: ["patient_name", "date", "time", "appointment_type"],
+            },
+          },
+        ],
+      },
+    }));
+
+    console.log("Voice agent ready. Listening...");
+  });
+
+  ws.on("message", (raw) => {
+    const event = JSON.parse(raw.toString());
+
+    if (event.type === "response.audio.delta") {
+      // Stream audio chunk to the user's speaker
+      const audioBytes = Buffer.from(event.delta, "base64");
+      playAudio(audioBytes); // your audio playback function
+    } else if (event.type === "response.function_call_arguments.done") {
+      // Agent called the booking tool
+      const args   = JSON.parse(event.arguments);
+      const result = bookAppointment(args);
+      // Return the tool result to continue the conversation
+      ws.send(JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type:    "function_call_output",
+          call_id: event.call_id,
+          output:  result,
+        },
+      }));
+      ws.send(JSON.stringify({ type: "response.create" }));
+    } else if (event.type === "error") {
+      console.error("Error:", event.error);
+      ws.close();
+    }
+  });
+}
+
+realtimeVoiceAgent();
+```
+:::
 
 ### Path 2: Vapi — Voice AI as a Service
 
@@ -268,7 +485,8 @@ Vapi abstracts the WebSocket complexity into a higher-level SDK. You define an a
 pip install vapi-python
 ```
 
-```python
+::: code-group
+```python [Python]
 from vapi import Vapi
 
 client = Vapi(token=VAPI_API_KEY)
@@ -322,6 +540,64 @@ call = client.calls.create(
 )
 print(f"Call started: {call.id}")
 ```
+```javascript [Node.js]
+// npm install @vapi-ai/server-sdk
+import { VapiClient } from "@vapi-ai/server-sdk";
+
+const client = new VapiClient({ token: process.env.VAPI_API_KEY });
+
+// Define the voice assistant
+const assistant = await client.assistants.create({
+  name: "Appointment Scheduler",
+  model: {
+    provider: "openai",
+    model:    "gpt-4o",
+    messages: [
+      {
+        role:    "system",
+        content:
+          "You are a friendly appointment scheduler for a dental clinic. " +
+          "Collect: patient name, preferred date/time, appointment type. " +
+          "Speak naturally and confirm details before booking. " +
+          "Keep each response under 30 words.",
+      },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name:        "book_appointment",
+          description: "Book the appointment in the scheduling system.",
+          parameters: {
+            type:       "object",
+            properties: {
+              patient_name:     { type: "string" },
+              date:             { type: "string" },
+              time:             { type: "string" },
+              appointment_type: { type: "string" },
+            },
+            required: ["patient_name", "date", "time", "appointment_type"],
+          },
+        },
+      },
+    ],
+  },
+  voice: {
+    provider: "11labs",
+    voiceId:  "rachel", // natural-sounding ElevenLabs voice
+  },
+  firstMessage:
+    "Hi, thanks for calling Sunrise Dental. I'm here to help you schedule an appointment. What's your name?",
+});
+
+// Make an outbound call
+const call = await client.calls.create({
+  assistantId: assistant.id,
+  customer: { number: "+1-555-000-1234" },
+});
+console.log(`Call started: ${call.id}`);
+```
+:::
 
 ### Voice Agent Use Cases Ready to Build
 

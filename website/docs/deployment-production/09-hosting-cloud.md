@@ -201,7 +201,9 @@ The cleanest approach is Mangum — a wrapper that adapts FastAPI to the Lambda 
 pip install mangum
 ```
 
-```python
+::: code-group
+
+```python [Python]
 # lambda_handler.py
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -222,6 +224,34 @@ def run(request: RunRequest):
 # Mangum wraps FastAPI for Lambda
 handler = Mangum(app)
 ```
+
+```javascript [Node.js]
+// lambda_handler.mjs — deploy with AWS SAM or the Lambda console
+// Uses the built-in Lambda handler signature
+import OpenAI from "openai";
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+export const handler = async (event) => {
+  const body =
+    typeof event.body === "string" ? JSON.parse(event.body) : event.body ?? {};
+  const input = body.input ?? "";
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    messages: [{ role: "user", content: input }],
+  });
+
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ output: response.choices[0].message.content }),
+  };
+};
+```
+
+:::
 
 ### Deploying with AWS SAM
 
@@ -287,18 +317,29 @@ flowchart LR
 
 **Development**: `.env` file, never committed. Use `python-dotenv` to load it.
 
-```python
+::: code-group
+
+```python [Python]
 from dotenv import load_dotenv
 load_dotenv()
 import os
 api_key = os.getenv("OPENAI_API_KEY")
 ```
 
+```javascript [Node.js]
+import "dotenv/config"; // npm install dotenv
+const apiKey = process.env.OPENAI_API_KEY;
+```
+
+:::
+
 **Staging / Production on Railway or Render**: set variables in the platform dashboard. They are injected as environment variables at runtime — never touch your code.
 
 **Production on AWS**: use AWS Systems Manager Parameter Store (free) or AWS Secrets Manager (paid, auto-rotation).
 
-```python
+::: code-group
+
+```python [Python]
 import boto3
 
 def get_secret(name: str) -> str:
@@ -307,6 +348,25 @@ def get_secret(name: str) -> str:
 
 openai_key = get_secret("/myagent/openai_api_key")
 ```
+
+```javascript [Node.js]
+import {
+  SSMClient,
+  GetParameterCommand,
+} from "@aws-sdk/client-ssm";
+
+const ssm = new SSMClient({ region: "us-east-1" });
+
+async function getSecret(name) {
+  const cmd = new GetParameterCommand({ Name: name, WithDecryption: true });
+  const result = await ssm.send(cmd);
+  return result.Parameter.Value;
+}
+
+const openaiKey = await getSecret("/myagent/openai_api_key");
+```
+
+:::
 
 ### The `.env.example` Convention
 
@@ -362,7 +422,9 @@ flowchart TD
 
 In production you will have hundreds of runs per hour. Tags let you filter by user, session, feature, or environment.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_core.runnables import RunnableConfig
 
 config = RunnableConfig(
@@ -377,13 +439,45 @@ config = RunnableConfig(
 result = agent_app.invoke({"messages": [...]}, config=config)
 ```
 
+```javascript [Node.js]
+// LangSmith tracing from Node.js via the LangSmith SDK
+import { Client } from "langsmith";
+import OpenAI from "openai";
+
+const ls = new Client();
+const openai = new OpenAI();
+
+async function tracedInvoke(userMessage, userId, threadId) {
+  const run = await ls.createRun({
+    name: "chat-endpoint",
+    run_type: "chain",
+    inputs: { message: userMessage },
+    tags: ["production", "chat-endpoint"],
+    extra: { metadata: { user_id: userId, thread_id: threadId, agent_version: "1.2.0" } },
+  });
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [{ role: "user", content: userMessage }],
+  });
+
+  const output = response.choices[0].message.content;
+  await ls.updateRun(run.id, { outputs: { output }, end_time: Date.now() });
+  return output;
+}
+```
+
+:::
+
 Now in LangSmith you can filter all runs by `user_id` or `agent_version`. When a user reports a bug, you find their exact trace in seconds.
 
 ### Custom Feedback and Scores
 
 You can attach human or automated feedback scores to any run — useful for tracking output quality over time.
 
-```python
+::: code-group
+
+```python [Python]
 from langsmith import Client
 
 client = Client()
@@ -396,6 +490,23 @@ client.create_feedback(
     comment="Accurate and concise"
 )
 ```
+
+```javascript [Node.js]
+import { Client } from "langsmith";
+
+const client = new Client();
+
+await client.createFeedback(
+  "run-id-here", // from the trace
+  "output_quality",
+  {
+    score: 0.9,
+    comment: "Accurate and concise",
+  }
+);
+```
+
+:::
 
 ### Monitoring a Live Deployment
 
@@ -435,7 +546,9 @@ LLM API costs are invisible until they are not. A runaway loop, a forgotten test
 
 Route cheap tasks to cheap models. Only use the expensive model where quality actually matters.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 
 # Use cheap model for classification
@@ -445,13 +558,54 @@ classifier = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 generator  = ChatOpenAI(model="gpt-4o", temperature=0.7)
 ```
 
+```javascript [Node.js]
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+// Use cheap model for classification
+async function classify(text) {
+  const r = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    max_tokens: 20,
+    messages: [{ role: "user", content: text }],
+  });
+  return r.choices[0].message.content;
+}
+
+// Use powerful model for generation
+async function generate(prompt) {
+  const r = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.7,
+    messages: [{ role: "user", content: prompt }],
+  });
+  return r.choices[0].message.content;
+}
+```
+
+:::
+
 **2. Prompt caching**: if you have a long system prompt (instructions, knowledge base, persona), enabling prompt caching means the provider charges you a fraction of the cost for repeated calls with the same prefix. Anthropic and OpenAI both support this — check their latest pricing pages for current rates.
 
 **3. max_tokens on outputs**: long outputs cost more. If your agent only needs a classification or a short answer, cap the output.
 
-```python
+::: code-group
+
+```python [Python]
 llm = ChatOpenAI(model="gpt-4o", max_tokens=256)
 ```
+
+```javascript [Node.js]
+const response = await openai.chat.completions.create({
+  model: "gpt-4o",
+  max_tokens: 256,
+  messages: [{ role: "user", content: prompt }],
+});
+```
+
+:::
 
 ### Set Budget Alerts
 

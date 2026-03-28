@@ -40,7 +40,9 @@ flowchart LR
 
 ### Building a Deterministic Eval Suite
 
-```python
+::: code-group
+
+```python [Python]
 from dataclasses import dataclass
 from typing import Callable
 
@@ -111,11 +113,76 @@ def run_eval_suite(agent_fn: Callable, suite: list[EvalCase]) -> dict:
     return results
 ```
 
+```javascript [Node.js]
+function checkLength(maxWords) {
+  return (output) => {
+    const count = output.split(/\s+/).length;
+    return { passed: count <= maxWords, message: `Word count: ${count} (limit: ${maxWords})` };
+  };
+}
+
+function checkNoForbidden(words) {
+  return (output) => {
+    const found = words.filter((w) => output.toLowerCase().includes(w.toLowerCase()));
+    return { passed: found.length === 0, message: found.length ? `Forbidden words found: ${found}` : "Clean" };
+  };
+}
+
+function checkContains(required) {
+  return (output) => {
+    const passed = output.toLowerCase().includes(required.toLowerCase());
+    return { passed, message: `Required phrase ${passed ? "found" : "MISSING"}: '${required}'` };
+  };
+}
+
+function checkValidJson(output) {
+  try {
+    JSON.parse(output);
+    return { passed: true, message: "Valid JSON" };
+  } catch (e) {
+    return { passed: false, message: `Invalid JSON: ${e.message}` };
+  }
+}
+
+const evalSuite = [
+  {
+    name: "support_reply_length",
+    input: { ticket: "How do I reset my password?" },
+    checks: [
+      checkLength(150),
+      checkNoForbidden(["I don't know", "I cannot help", "As an AI"]),
+      checkContains("password"),
+    ],
+  },
+  {
+    name: "extraction_valid_json",
+    input: { document: "Invoice #1234, dated 2025-07-01, total $500" },
+    checks: [checkValidJson],
+  },
+];
+
+async function runEvalSuite(agentFn, suite) {
+  const results = { passed: 0, failed: 0, details: [] };
+  for (const evalCase of suite) {
+    const output = await agentFn(evalCase.input);
+    const caseResults = evalCase.checks.map((check) => ({ ...check(output), check: check.name }));
+    const allPassed = caseResults.every((r) => r.passed);
+    results[allPassed ? "passed" : "failed"]++;
+    results.details.push({ case: evalCase.name, passed: allPassed, checks: caseResults });
+  }
+  return results;
+}
+```
+
+:::
+
 ### Model-Based Evals (LLM-as-Judge)
 
 For quality dimensions code cannot measure — accuracy, helpfulness, tone — use a second LLM as the judge.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -156,11 +223,49 @@ def eval_helpfulness(task: str, output: str) -> JudgeResult:
     )
 ```
 
+```javascript [Node.js]
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+async function evalGroundedness(question, context, answer) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content:
+        `Score this answer for groundedness (1-5):\n5=fully supported, 3=partially, 1=contradicts\nQuestion: ${question}\nContext: ${context}\nAnswer: ${answer}\n\nScore 4 or 5 = passed. Be strict.\nRespond with JSON: {"score": 1-5, "reasoning": "...", "passed": bool}`,
+    }],
+  });
+  return JSON.parse(response.choices[0].message.content);
+}
+
+async function evalHelpfulness(task, output) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content:
+        `Score this output for task completion (1-5):\n5=fully completes, 3=partial, 1=does not complete\nTask: ${task}\nOutput: ${output}\n\nScore 4 or 5 = passed.\nRespond with JSON: {"score": 1-5, "reasoning": "...", "passed": bool}`,
+    }],
+  });
+  return JSON.parse(response.choices[0].message.content);
+}
+```
+
+:::
+
 ### Building a Regression Test Dataset
 
 Every time your agent fails on a real input in production, save that input as a test case. This is your regression suite — a growing collection of the edge cases that have burned you before.
 
-```python
+::: code-group
+
+```python [Python]
 import json
 from datetime import datetime, timezone
 
@@ -182,11 +287,31 @@ def save_regression_case(
         f.write(json.dumps(case) + "\n")
 ```
 
+```javascript [Node.js]
+import { appendFileSync } from "fs";
+
+function saveRegressionCase(inputData, expectedBehavior, failureDescription, source = "production") {
+  const caseEntry = {
+    id: `reg_${new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)}`,
+    input: inputData,
+    expected: expectedBehavior,
+    failure: failureDescription,
+    source,
+    created_at: new Date().toISOString(),
+  };
+  appendFileSync("regression_cases.jsonl", JSON.stringify(caseEntry) + "\n");
+}
+```
+
+:::
+
 Run the full regression suite before every deployment. A prompt change that fixes one case should not break ten others.
 
 ### Eval Metrics to Track Over Time
 
-```python
+::: code-group
+
+```python [Python]
 def compute_eval_metrics(results: list[dict]) -> dict:
     total  = len(results)
     passed = sum(1 for r in results if r["passed"])
@@ -198,6 +323,22 @@ def compute_eval_metrics(results: list[dict]) -> dict:
         "total_cases":  total,
     }
 ```
+
+```javascript [Node.js]
+function computeEvalMetrics(results) {
+  const total = results.length;
+  const passed = results.filter((r) => r.passed).length;
+  const scores = results.filter((r) => r.score != null).map((r) => r.score);
+  return {
+    pass_rate: Math.round((passed / total) * 1000) / 10,
+    fail_rate: Math.round(((total - passed) / total) * 1000) / 10,
+    mean_score: scores.length ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 100) / 100 : null,
+    total_cases: total,
+  };
+}
+```
+
+:::
 
 Track pass rate over time. A declining pass rate after a model upgrade or prompt change is a regression signal before your users find it.
 
@@ -236,7 +377,9 @@ flowchart TD
 
 OpenAI's fine-tuning format requires JSONL files where each line is one training example.
 
-```python
+::: code-group
+
+```python [Python]
 import json
 
 # Each example is a complete conversation the model should learn to replicate
@@ -285,9 +428,53 @@ def validate_training_data(path: str) -> dict:
     return {"errors": errors, "warnings": warnings, "valid": not errors}
 ```
 
+```javascript [Node.js]
+import { writeFileSync, readFileSync, appendFileSync } from "fs";
+
+// Each example is a complete conversation the model should learn to replicate
+const trainingExamples = [
+  {
+    messages: [
+      { role: "system", content: "You are a support agent for Acme SaaS. Reply concisely and helpfully. Never say 'I cannot help with that.'" },
+      { role: "user", content: "I was charged twice this month." },
+      { role: "assistant", content: "I'm sorry about that. I can see a duplicate charge on your account from July 3rd. I've initiated a refund for $49 — it should appear within 3-5 business days. Can I help with anything else?" },
+    ],
+  },
+  // ... 99+ more examples
+];
+
+// Write to JSONL
+writeFileSync("training_data.jsonl", trainingExamples.map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+// Validate format
+function validateTrainingData(path) {
+  const errors = [];
+  const warnings = [];
+  const lines = readFileSync(path, "utf8").trim().split("\n");
+  lines.forEach((line, i) => {
+    try {
+      const example = JSON.parse(line);
+      const messages = example.messages ?? [];
+      if (!messages.length) errors.push(`Line ${i + 1}: no messages`);
+      if (messages[messages.length - 1]?.role !== "assistant")
+        errors.push(`Line ${i + 1}: last message must be assistant`);
+      const totalTokens = messages.reduce((sum, m) => sum + m.content.split(/\s+/).length * 1.3, 0);
+      if (totalTokens > 4000) warnings.push(`Line ${i + 1}: long example (${Math.round(totalTokens)} est. tokens)`);
+    } catch (e) {
+      errors.push(`Line ${i + 1}: invalid JSON — ${e.message}`);
+    }
+  });
+  return { errors, warnings, valid: errors.length === 0 };
+}
+```
+
+:::
+
 ### Submitting a Fine-Tuning Job
 
-```python
+::: code-group
+
+```python [Python]
 from openai import OpenAI
 
 client = OpenAI()
@@ -323,11 +510,50 @@ if status.status == "succeeded":
     print(f"Fine-tuned model: {status.fine_tuned_model}")
 ```
 
+```javascript [Node.js]
+import OpenAI from "openai";
+import { createReadStream } from "fs";
+
+const openai = new OpenAI();
+
+// Upload training file
+const trainingFile = await openai.files.create({
+  file: createReadStream("training_data.jsonl"),
+  purpose: "fine-tune",
+});
+console.log(`Training file ID: ${trainingFile.id}`);
+
+// Create the fine-tuning job
+const job = await openai.fineTuning.jobs.create({
+  training_file: trainingFile.id,
+  model: "gpt-4o-mini-2024-07-18",
+  hyperparameters: { n_epochs: 3 },
+  suffix: "support-agent-v1",
+});
+console.log(`Fine-tuning job: ${job.id}, status: ${job.status}`);
+
+// Poll for completion
+let status;
+do {
+  await new Promise((r) => setTimeout(r, 30_000));
+  status = await openai.fineTuning.jobs.retrieve(job.id);
+  console.log(`Status: ${status.status}`);
+} while (!["succeeded", "failed"].includes(status.status));
+
+if (status.status === "succeeded") {
+  console.log(`Fine-tuned model: ${status.fine_tuned_model}`);
+}
+```
+
+:::
+
 ### Evaluating the Fine-Tuned Model
 
 Always compare the fine-tuned model against the base model on your eval suite before switching.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 
 base_model      = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -351,6 +577,30 @@ def compare_models(eval_cases: list, agent_fn_a, agent_fn_b) -> dict:
     }
 ```
 
+```javascript [Node.js]
+async function compareModels(evalCases, agentFnA, agentFnB) {
+  const scoresA = [];
+  const scoresB = [];
+  for (const evalCase of evalCases) {
+    const outputA = await agentFnA(evalCase.input);
+    const outputB = await agentFnB(evalCase.input);
+    const scoreA = (await evalHelpfulness(evalCase.task, outputA)).score;
+    const scoreB = (await evalHelpfulness(evalCase.task, outputB)).score;
+    scoresA.push(scoreA);
+    scoresB.push(scoreB);
+  }
+  const avgA = scoresA.reduce((a, b) => a + b, 0) / scoresA.length;
+  const avgB = scoresB.reduce((a, b) => a + b, 0) / scoresB.length;
+  return {
+    model_a_avg: avgA,
+    model_b_avg: avgB,
+    improvement: ((avgB - avgA) / avgA) * 100,
+  };
+}
+```
+
+:::
+
 Deploy the fine-tuned model only if it beats the base model on your eval suite by a meaningful margin (>5%). A fine-tuned model that is marginally better is not worth the extra maintenance cost.
 
 ---
@@ -363,7 +613,9 @@ The ReAct loop from Chapter 5 is powerful but has a ceiling. These four patterns
 
 The simplest upgrade. Force the model to reason step by step before answering. The act of writing the reasoning improves the answer quality — the model cannot skip to a conclusion without first articulating the path.
 
-```python
+::: code-group
+
+```python [Python]
 # Without CoT: model guesses
 result = llm.invoke("Is this invoice total correct? Items: 3x $25 + 2x $40 = $155")
 
@@ -378,13 +630,40 @@ result = llm.invoke(
 )
 ```
 
+```javascript [Node.js]
+// Without CoT: model guesses
+const withoutCot = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "Is this invoice total correct? Items: 3x $25 + 2x $40 = $155" }],
+});
+
+// With CoT: model reasons first
+const withCot = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{
+    role: "user",
+    content:
+      "Is this invoice total correct? Items: 3x $25 + 2x $40 = $155\n\n" +
+      "Think step by step before answering:\n" +
+      "1. Calculate each line item total\n" +
+      "2. Sum the line items\n" +
+      "3. Compare to the stated total\n" +
+      "4. State whether it is correct and by how much if not",
+  }],
+});
+```
+
+:::
+
 Use CoT when the task involves arithmetic, multi-step logic, or sequential reasoning. The performance gain on hard tasks is substantial. The cost is slightly more output tokens.
 
 ### Pattern 2: Self-Consistency
 
 Run the same prompt multiple times with high temperature, collect the outputs, and return the most common answer. This trades cost for accuracy on problems with a correct answer.
 
-```python
+::: code-group
+
+```python [Python]
 from collections import Counter
 from langchain_openai import ChatOpenAI
 
@@ -414,6 +693,38 @@ category = self_consistent_answer(
 )
 ```
 
+```javascript [Node.js]
+async function selfConsistentAnswer(question, n = 5, temperature = 0.7) {
+  const promises = Array.from({ length: n }, () =>
+    openai.chat.completions.create({
+      model: "gpt-4o",
+      temperature,
+      max_tokens: 20,
+      messages: [{ role: "user", content: question }],
+    }),
+  );
+
+  const responses = await Promise.all(promises);
+  const answers = responses.map((r) => r.choices[0].message.content.trim());
+
+  const counts = answers.reduce((acc, a) => { acc[a] = (acc[a] ?? 0) + 1; return acc; }, {});
+  const majority = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  const confidence = counts[majority] / n;
+
+  console.log("Answers:", counts, `| Majority: '${majority}' (${Math.round(confidence * 100)}% agreement)`);
+  return majority;
+}
+
+const category = await selfConsistentAnswer(
+  "Classify this support ticket as: billing, technical, account, or feature_request.\n\n" +
+  "Ticket: 'My API key stopped working after I upgraded my plan last night.'\n\n" +
+  "Reply with only the category name.",
+  5
+);
+```
+
+:::
+
 Self-consistency is most valuable for tasks where one wrong answer is costly (classification decisions that route to irreversible actions, calculations, factual lookups). Cost is linear with n — use it selectively.
 
 ### Pattern 3: Reflexion
@@ -422,7 +733,9 @@ Reflexion is self-correction with persistent memory of past failures. The agent 
 
 Unlike the basic reflection loop from Chapter 7 (which only keeps the current critique), Reflexion builds a growing memory of failure modes.
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
@@ -490,6 +803,49 @@ graph.add_edge("reflector", "actor")
 reflexion_agent = graph.compile()
 ```
 
+```javascript [Node.js]
+async function reflexionAgent(task, maxAttempts = 4) {
+  const reflections = [];
+  let lastAttempt = "";
+
+  async function invoke(prompt, temperature = 0) {
+    const r = await openai.chat.completions.create({
+      model: "gpt-4o",
+      temperature,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return r.choices[0].message.content;
+  }
+
+  for (let i = 0; i < maxAttempts; i++) {
+    // Actor: attempt the task, incorporating lessons from failures
+    const lessonBlock = reflections.length
+      ? `\n\nLessons from previous attempts:\n${reflections.map((r) => `- ${r}`).join("\n")}\nDo not repeat these mistakes.`
+      : "";
+    lastAttempt = await invoke(`${task}${lessonBlock}`, 0.5);
+
+    // Evaluator: assess the attempt
+    const evaluation = await invoke(
+      `Evaluate this attempt. Be strict.\n\nTask: ${task}\nAttempt: ${lastAttempt}\n\nRespond with PASS or FAIL followed by your reasoning.`
+    );
+    const passed = evaluation.trim().toUpperCase().startsWith("PASS");
+    console.log(`Attempt ${i + 1}: ${passed ? "PASS" : "FAIL"}`);
+
+    if (passed) return lastAttempt;
+
+    // Reflector: extract a lesson from this failure
+    const lesson = await invoke(
+      `The following attempt failed.\n\nTask: ${task}\nAttempt: ${lastAttempt}\nFeedback: ${evaluation}\n\nWrite one lesson under 20 words that would prevent this failure next time.`
+    );
+    reflections.push(lesson.trim());
+  }
+
+  return lastAttempt; // best effort
+}
+```
+
+:::
+
 The `reflections` list is what makes Reflexion different. Each failure adds a lesson. By attempt 3 the agent has explicit memory of what went wrong on attempts 1 and 2 and actively avoids those mistakes.
 
 ### Pattern 4: Constitutional AI (Principle-Based Output Filtering)
@@ -498,7 +854,9 @@ Constitutional AI gives your agent a set of principles it must apply to its own 
 
 This is more reliable than a single "make it safe" instruction because it is explicit, auditable, and composable — you can add or remove principles without rewriting the system prompt.
 
-```python
+::: code-group
+
+```python [Python]
 from pydantic import BaseModel
 from langchain_openai import ChatOpenAI
 
@@ -547,6 +905,54 @@ def constitutional_agent(user_message: str, customer_name: str) -> str:
     return apply_constitution(raw, context=f"Customer name: {customer_name}")
 ```
 
+```javascript [Node.js]
+const CONSTITUTION = [
+  "The response must not make promises about specific timelines unless explicitly confirmed.",
+  "The response must not reveal pricing of products not in the official price list.",
+  "The response must address the customer by name if their name is known.",
+  "The response must end with an offer to help further.",
+  "The response must not exceed 150 words.",
+];
+
+async function applyConstitution(response, context = "") {
+  let current = response;
+  for (const principle of CONSTITUTION) {
+    const r = await openai.chat.completions.create({
+      model: "gpt-4o",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content:
+          `Check if this response violates the principle.\nPrinciple: ${principle}\nContext: ${context}\nResponse: ${current}\n\n` +
+          `If violated, provide a revised response. If not, return original unchanged.\n` +
+          `Respond with JSON: {"violates_principle": bool, "principle_violated": "...", "revised_response": "..."}`,
+      }],
+    });
+    const result = JSON.parse(r.choices[0].message.content);
+    if (result.violates_principle) {
+      console.log(`  Violated: '${principle.slice(0, 50)}...' — revised`);
+      current = result.revised_response;
+    }
+  }
+  return current;
+}
+
+async function constitutionalAgent(userMessage, customerName) {
+  const r = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [{
+      role: "user",
+      content: `You are a customer support agent. Reply helpfully.\n\nCustomer name: ${customerName}\nMessage: ${userMessage}`,
+    }],
+  });
+  const raw = r.choices[0].message.content;
+  return applyConstitution(raw, `Customer name: ${customerName}`);
+}
+```
+
+:::
+
 The strength of Constitutional AI is auditability. Every violation is logged. You can tell a client exactly which principles apply to your agent and prove they are being enforced.
 
 ---
@@ -557,7 +963,9 @@ Prompt engineering without measurement is guessing. A/B testing lets you measure
 
 ### The A/B Testing Infrastructure
 
-```python
+::: code-group
+
+```python [Python]
 import random
 import hashlib
 from langchain_openai import ChatOpenAI
@@ -605,11 +1013,55 @@ def log_experiment_result(experiment: str, variant: str, user_id: str, **metrics
     print(f"[experiment] {experiment} | {variant} | user={user_id} | {metrics}")
 ```
 
+```javascript [Node.js]
+import { createHash } from "crypto";
+
+const PROMPT_VARIANTS = {
+  control: "You are a helpful support agent. Answer the customer's question accurately and concisely.",
+  treatment:
+    "You are a support agent who specializes in making customers feel heard before solving their problem. " +
+    "Start by briefly acknowledging the customer's situation, then provide a clear solution. " +
+    "End with one proactive tip they might not know.",
+};
+
+function getVariant(userId, experiment) {
+  const key = `${experiment}:${userId}`;
+  const hashVal = parseInt(createHash("md5").update(key).digest("hex").slice(0, 8), 16);
+  return hashVal % 2 === 0 ? "treatment" : "control";
+}
+
+async function runExperiment(userId, message) {
+  const variant = getVariant(userId, "support_prompt_v2");
+  const systemPrompt = PROMPT_VARIANTS[variant];
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.3,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: message },
+    ],
+  });
+  const output = response.choices[0].message.content;
+
+  logExperimentResult("support_prompt_v2", variant, userId, { input_length: message.length, output_length: output.length });
+  return { output, variant };
+}
+
+function logExperimentResult(experiment, variant, userId, metrics) {
+  console.log(`[experiment] ${experiment} | ${variant} | user=${userId} |`, metrics);
+}
+```
+
+:::
+
 ### Analyzing Results
 
 After collecting enough samples (minimum 200 per variant, ideally 500+), compare outcomes:
 
-```python
+::: code-group
+
+```python [Python]
 def analyze_experiment(experiment: str, variant_a: str = "control", variant_b: str = "treatment") -> dict:
     # Pull from your database
     results_a = db.query(
@@ -641,6 +1093,40 @@ def analyze_experiment(experiment: str, variant_a: str = "control", variant_b: s
         "recommendation": variant_b if (b.get("avg_quality", 0) > a.get("avg_quality", 0)) else variant_a
     }
 ```
+
+```javascript [Node.js]
+async function analyzeExperiment(experiment, variantA = "control", variantB = "treatment") {
+  const [resultsA, resultsB] = await Promise.all([
+    db.query("SELECT * FROM experiment_results WHERE experiment=? AND variant=?", experiment, variantA),
+    db.query("SELECT * FROM experiment_results WHERE experiment=? AND variant=?", experiment, variantB),
+  ]);
+
+  function summary(results) {
+    const scores = results.filter((r) => r.quality_score != null).map((r) => r.quality_score);
+    const csat = results.filter((r) => r.csat != null).map((r) => r.csat);
+    const avgOutputLen = results.reduce((s, r) => s + r.output_length, 0) / results.length;
+    return {
+      n: results.length,
+      avg_quality: scores.length ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 100) / 100 : null,
+      avg_csat: csat.length ? Math.round((csat.reduce((a, b) => a + b, 0) / csat.length) * 100) / 100 : null,
+      avg_output_len: Math.round(avgOutputLen),
+    };
+  }
+
+  const a = summary(resultsA);
+  const b = summary(resultsB);
+  const qualityLift = a.avg_quality ? `${(((b.avg_quality - a.avg_quality) / a.avg_quality) * 100).toFixed(1)}%` : "N/A";
+
+  return {
+    [variantA]: a,
+    [variantB]: b,
+    quality_lift: qualityLift,
+    recommendation: (b.avg_quality ?? 0) > (a.avg_quality ?? 0) ? variantB : variantA,
+  };
+}
+```
+
+:::
 
 ### What Metrics to Measure
 

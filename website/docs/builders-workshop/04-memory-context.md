@@ -64,7 +64,7 @@ LLMs cannot accept infinite history. Each model has a **context window** (e.g., 
 
 ### Two Classic Solutions
 
-**A. Sliding Window**  
+**A. Sliding Window**
 Keep only the last N turns and drop the rest.
 
 ```mermaid
@@ -72,12 +72,22 @@ flowchart LR
   H[Full History] --> W[Last N Messages] --> M[Model]
 ```
 
-```python
+::: code-group
+
+```python [Python]
 def sliding_window(messages, max_turns=10):
     return messages[-max_turns:]
 ```
 
-**B. Summarization**  
+```javascript [Node.js]
+function slidingWindow(messages, maxTurns = 10) {
+  return messages.slice(-maxTurns);
+}
+```
+
+:::
+
+**B. Summarization**
 Summarize older turns into a compact memory note.
 
 ```mermaid
@@ -87,7 +97,9 @@ flowchart LR
   C --> M[Model]
 ```
 
-```python
+::: code-group
+
+```python [Python]
 def summarize_history(llm, messages):
     prompt = (
         "Summarize the conversation in 5 bullet points. "
@@ -97,11 +109,33 @@ def summarize_history(llm, messages):
     return llm.invoke(prompt + "\n\n" + text).content
 ```
 
+```javascript [Node.js]
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+async function summarizeHistory(messages) {
+  const prompt =
+    "Summarize the conversation in 5 bullet points. " +
+    "Preserve user goals and preferences. Omit small talk.";
+  const text = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [{ role: "user", content: prompt + "\n\n" + text }],
+  });
+  return response.choices[0].message.content;
+}
+```
+
+:::
+
 ### LangChain Example: Conversation Buffer
 
 This is the simplest short-term memory. It keeps all turns in memory and passes them through automatically.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationChain
 from langchain_openai import ChatOpenAI
@@ -118,6 +152,32 @@ conversation = ConversationChain(
 conversation.predict(input="My name is Sarah.")
 conversation.predict(input="What is my name?")
 ```
+
+```javascript [Node.js]
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+// Maintain conversation history manually (equivalent to ConversationBufferMemory)
+const messages = [];
+
+async function chat(userInput) {
+  messages.push({ role: "user", content: userInput });
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    messages,
+  });
+  const reply = response.choices[0].message.content;
+  messages.push({ role: "assistant", content: reply });
+  return reply;
+}
+
+await chat("My name is Sarah.");
+console.log(await chat("What is my name?"));
+```
+
+:::
 
 ## 2. Long-Term Memory (RAG)
 
@@ -243,7 +303,9 @@ flowchart LR
 
 ### Code: PDF Chat Agent
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
@@ -280,6 +342,99 @@ response = qa_chain.run("What is the vacation policy in this document?")
 print(response)
 ```
 
+```javascript [Node.js]
+import fs from "fs";
+import path from "path";
+import OpenAI from "openai";
+import { PDFExtract } from "pdf.js-extract";
+
+// npm install openai pdf.js-extract
+
+const openai = new OpenAI();
+
+// 1. Load and extract text from PDF
+async function loadPDF(filePath) {
+  const pdfExtract = new PDFExtract();
+  const data = await pdfExtract.extract(filePath, {});
+  return data.pages
+    .map((p) => p.content.map((c) => c.str).join(" "))
+    .join("\n");
+}
+
+// 2. Chunk the text
+function chunkText(text, chunkSize = 1000, overlap = 100) {
+  const chunks = [];
+  let start = 0;
+  while (start < text.length) {
+    chunks.push(text.slice(start, start + chunkSize));
+    start += chunkSize - overlap;
+  }
+  return chunks;
+}
+
+// 3 & 4. Embed and store chunks in memory
+async function embedChunks(chunks) {
+  const response = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: chunks,
+  });
+  return response.data.map((d) => d.embedding);
+}
+
+// 5. Retrieve top-k chunks via cosine similarity
+function cosineSimilarity(a, b) {
+  const dot = a.reduce((sum, v, i) => sum + v * b[i], 0);
+  const normA = Math.sqrt(a.reduce((s, v) => s + v * v, 0));
+  const normB = Math.sqrt(b.reduce((s, v) => s + v * v, 0));
+  return dot / (normA * normB);
+}
+
+async function retrieve(query, chunks, embeddings, k = 3) {
+  const qEmbRes = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: [query],
+  });
+  const qEmb = qEmbRes.data[0].embedding;
+  return chunks
+    .map((c, i) => ({ chunk: c, score: cosineSimilarity(qEmb, embeddings[i]) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k)
+    .map((r) => r.chunk);
+}
+
+// 6 & 7. Answer question using retrieved context
+async function askPDF(question, pdfPath) {
+  const text = await loadPDF(pdfPath);
+  const chunks = chunkText(text);
+  const embeddings = await embedChunks(chunks);
+  const context = await retrieve(question, chunks, embeddings);
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    messages: [
+      {
+        role: "system",
+        content: "Answer questions based only on the provided context.",
+      },
+      {
+        role: "user",
+        content: `Context:\n${context.join("\n\n")}\n\nQuestion: ${question}`,
+      },
+    ],
+  });
+  return response.choices[0].message.content;
+}
+
+const answer = await askPDF(
+  "What is the vacation policy in this document?",
+  "policy.pdf",
+);
+console.log(answer);
+```
+
+:::
+
 ### What Just Happened?
 
 ```mermaid
@@ -310,7 +465,9 @@ flowchart LR
 
 ### Code: Memory + RAG
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
@@ -342,6 +499,92 @@ chain = ConversationalRetrievalChain.from_llm(
 chain.invoke({"question": "What is the vacation policy?"})
 chain.invoke({"question": "How many days does it allow?"})
 ```
+
+```javascript [Node.js]
+import OpenAI from "openai";
+import { PDFExtract } from "pdf.js-extract";
+
+// npm install openai pdf.js-extract
+
+const openai = new OpenAI();
+
+async function buildVectorStore(pdfPath) {
+  const pdfExtract = new PDFExtract();
+  const data = await pdfExtract.extract(pdfPath, {});
+  const text = data.pages
+    .map((p) => p.content.map((c) => c.str).join(" "))
+    .join("\n");
+
+  const chunks = [];
+  let start = 0;
+  while (start < text.length) {
+    chunks.push(text.slice(start, start + 1000));
+    start += 900;
+  }
+
+  const embRes = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: chunks,
+  });
+  return { chunks, embeddings: embRes.data.map((d) => d.embedding) };
+}
+
+function cosineSim(a, b) {
+  const dot = a.reduce((s, v, i) => s + v * b[i], 0);
+  return (
+    dot /
+    (Math.sqrt(a.reduce((s, v) => s + v * v, 0)) *
+      Math.sqrt(b.reduce((s, v) => s + v * v, 0)))
+  );
+}
+
+async function retrieveChunks(query, store, k = 3) {
+  const qRes = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: [query],
+  });
+  const qEmb = qRes.data[0].embedding;
+  return store.chunks
+    .map((c, i) => ({ c, score: cosineSim(qEmb, store.embeddings[i]) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k)
+    .map((r) => r.c);
+}
+
+// Memory + RAG chat
+const store = await buildVectorStore("policy.pdf");
+const chatHistory = [];
+
+async function chat(question) {
+  const context = await retrieveChunks(question, store);
+  const messages = [
+    {
+      role: "system",
+      content:
+        "You are a helpful assistant. Answer based on the provided context and conversation history.",
+    },
+    ...chatHistory,
+    {
+      role: "user",
+      content: `Context:\n${context.join("\n\n")}\n\nQuestion: ${question}`,
+    },
+  ];
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    messages,
+  });
+  const reply = res.choices[0].message.content;
+  chatHistory.push({ role: "user", content: question });
+  chatHistory.push({ role: "assistant", content: reply });
+  return reply;
+}
+
+console.log(await chat("What is the vacation policy?"));
+console.log(await chat("How many days does it allow?"));
+```
+
+:::
 
 ## Common Pitfalls
 

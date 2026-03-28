@@ -55,7 +55,9 @@ flowchart LR
 
 ### Basic Reflection Pattern
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -104,11 +106,73 @@ result = reflect_and_generate(
 print(result)
 ```
 
+```javascript [Node.js]
+import { ChatOpenAI } from "@langchain/openai";
+import { z } from "zod";
+
+const llm    = new ChatOpenAI({ model: "gpt-4o", temperature: 0.7 });
+const critic = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+
+const CritiqueResultSchema = z.object({
+  passed: z.boolean(),
+  issues: z.string(), // empty string if passed
+});
+
+async function generate(task) {
+  const result = await llm.invoke(task);
+  return result.content;
+}
+
+async function critique(task, output) {
+  const structuredCritic = critic.withStructuredOutput(CritiqueResultSchema);
+  return structuredCritic.invoke(
+    `You are a strict quality reviewer.\n\n` +
+    `Original task:\n${task}\n\n` +
+    `Output to review:\n${output}\n\n` +
+    `Does this output fully and correctly complete the task? ` +
+    `If not, describe the specific issues. Be precise.`
+  );
+}
+
+async function reflectAndGenerate(task, maxAttempts = 3) {
+  let attempt = 0;
+  let output  = await generate(task);
+
+  while (attempt < maxAttempts) {
+    const result = await critique(task, output);
+    if (result.passed) {
+      console.log(`✓ Passed on attempt ${attempt + 1}`);
+      return output;
+    }
+    console.log(`✗ Attempt ${attempt + 1} failed: ${result.issues}`);
+    // Re-generate with the critique attached
+    output = await generate(
+      `${task}\n\nPrevious attempt was rejected. Issues: ${result.issues}\nPlease fix these issues.`
+    );
+    attempt++;
+  }
+
+  console.log("Max attempts reached. Returning best effort.");
+  return output;
+}
+
+// Usage
+const result = await reflectAndGenerate(
+  "Write a JavaScript function that checks if a string is a valid email address. " +
+  "Include JSDoc with examples."
+);
+console.log(result);
+```
+
+:::
+
 ### Reflection in LangGraph
 
 For multi-step pipelines, reflection becomes a node with a conditional edge back to the generator — exactly like the editor loop in Chapter 6, but now the agent critiques itself rather than a separate agent critiquing it.
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
@@ -158,6 +222,65 @@ result = app.invoke({"brief": "Why developers are switching to Rust in 2025", "d
 print(result["draft"])
 ```
 
+```javascript [Node.js]
+import { ChatOpenAI } from "@langchain/openai";
+import { StateGraph, END, START } from "@langchain/langgraph";
+import { Annotation } from "@langchain/langgraph";
+import { z } from "zod";
+
+const BlogStateAnnotation = Annotation.Root({
+  brief:    Annotation(),
+  draft:    Annotation(),
+  critique: Annotation(),
+  passed:   Annotation(),
+  attempts: Annotation(),
+});
+
+const CritiqueResultSchema = z.object({
+  passed:   z.boolean(),
+  critique: z.string(),
+});
+
+const llm    = new ChatOpenAI({ model: "gpt-4o", temperature: 0.7 });
+const critic = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+
+async function writer(state) {
+  const feedback = state.critique ? `\n\nFix this: ${state.critique}` : "";
+  const result = await llm.invoke(`Write a 200-word blog intro for: ${state.brief}${feedback}`);
+  return { draft: result.content, attempts: (state.attempts ?? 0) + 1 };
+}
+
+async function reviewer(state) {
+  const structured = critic.withStructuredOutput(CritiqueResultSchema);
+  const result = await structured.invoke(
+    `Review this blog intro for clarity, engagement, and relevance to the brief.\n` +
+    `Brief: ${state.brief}\nDraft: ${state.draft}`
+  );
+  return { passed: result.passed, critique: result.critique };
+}
+
+function route(state) {
+  if (state.passed || (state.attempts ?? 0) >= 3) return "end";
+  return "revise";
+}
+
+const graph = new StateGraph(BlogStateAnnotation)
+  .addNode("writer",   writer)
+  .addNode("reviewer", reviewer)
+  .addEdge(START, "writer")
+  .addEdge("writer", "reviewer")
+  .addConditionalEdges("reviewer", route, { revise: "writer", end: END });
+
+const app = graph.compile();
+const result = await app.invoke({
+  brief: "Why developers are switching to Rust in 2025",
+  draft: "", critique: "", passed: false, attempts: 0,
+});
+console.log(result.draft);
+```
+
+:::
+
 ---
 
 ## 2. Retry Logic: Handling Infrastructure Failures
@@ -168,10 +291,19 @@ The golden rule: **never let a transient error kill a long-running agent**.
 
 ### The Problem
 
-```python
+::: code-group
+
+```python [Python]
 # This will crash if the API is rate-limited or flakes
 result = llm.invoke("Summarize this 10,000 word report...")
 ```
+
+```javascript [Node.js]
+// This will crash if the API is rate-limited or flakes
+const result = await llm.invoke("Summarize this 10,000 word report...");
+```
+
+:::
 
 One 429 rate-limit response and the whole run is gone. If you are 40 minutes into a complex pipeline, that is a painful restart.
 
@@ -183,7 +315,9 @@ One 429 rate-limit response and the whole run is gone. If you are 40 minutes int
 pip install tenacity
 ```
 
-```python
+::: code-group
+
+```python [Python]
 import time
 import random
 from tenacity import (
@@ -212,6 +346,38 @@ def call_llm_with_retry(llm, prompt: str) -> str:
     return llm.invoke(prompt).content
 ```
 
+```javascript [Node.js]
+// Node.js equivalent using async-retry (npm install async-retry)
+import retry from "async-retry";
+import { ChatOpenAI } from "@langchain/openai";
+
+const llm = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+
+async function callLlmWithRetry(prompt) {
+  return retry(
+    async (bail, attempt) => {
+      try {
+        const result = await llm.invoke(prompt);
+        return result.content;
+      } catch (err) {
+        // Only retry on rate limits / timeouts — bail on auth errors
+        if (err.status === 401 || err.status === 400) bail(err);
+        console.warn(`Attempt ${attempt} failed: ${err.message}. Retrying...`);
+        throw err;
+      }
+    },
+    {
+      retries:  4,
+      factor:   2,
+      minTimeout: 2000,
+      maxTimeout: 60000,
+    }
+  );
+}
+```
+
+:::
+
 What this does:
 
 - Retries on rate limits, timeouts, and connection errors
@@ -230,7 +396,9 @@ flowchart LR
 
 ### Wrapping a LangChain Agent Step
 
-```python
+::: code-group
+
+```python [Python]
 from tenacity import retry, stop_after_attempt, wait_exponential
 from langchain_openai import ChatOpenAI
 
@@ -241,7 +409,26 @@ def safe_invoke(prompt: str) -> str:
     return llm.invoke(prompt).content
 ```
 
-Drop `safe_invoke` anywhere you call an LLM inside a pipeline node. The rest of the graph is unaffected.
+```javascript [Node.js]
+import retry from "async-retry";
+import { ChatOpenAI } from "@langchain/openai";
+
+const llm = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+
+async function safeInvoke(prompt) {
+  return retry(
+    async () => {
+      const result = await llm.invoke(prompt);
+      return result.content;
+    },
+    { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 30000 }
+  );
+}
+```
+
+:::
+
+Drop `safe_invoke` / `safeInvoke` anywhere you call an LLM inside a pipeline node. The rest of the graph is unaffected.
 
 ---
 
@@ -264,7 +451,9 @@ flowchart LR
 
 ### LangChain's `.with_fallbacks()`
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_ollama import ChatOllama
@@ -281,13 +470,34 @@ result = robust_llm.invoke("Summarize the key points of transformer architecture
 print(result.content)
 ```
 
+```javascript [Node.js]
+import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
+import { ChatOllama } from "@langchain/ollama";
+
+const primary   = new ChatOpenAI({ model: "gpt-4o" });
+const secondary = new ChatAnthropic({ model: "claude-sonnet-4-5" });
+const local     = new ChatOllama({ model: "llama3" });
+
+// Automatic fallback chain
+const robustLlm = primary.withFallbacks([secondary, local]);
+
+// Use it like any other LLM — fallback is transparent
+const result = await robustLlm.invoke("Summarize the key points of transformer architecture.");
+console.log(result.content);
+```
+
+:::
+
 If `gpt-4o` raises an exception, LangChain tries `claude-sonnet-4-5`. If that fails, it tries `llama3` locally. If all three fail, it raises the last exception.
 
 ### Fallback with Different Prompts Per Model
 
 Sometimes the same prompt does not work equally well across models. Use a list of runnables with model-specific prompts.
 
-```python
+::: code-group
+
+```python [Python]
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -306,6 +516,26 @@ anthropic_chain = (
 robust_chain = openai_chain.with_fallbacks([anthropic_chain])
 result = robust_chain.invoke({"task": "Explain RAG in one paragraph."})
 ```
+
+```javascript [Node.js]
+import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { StringOutputParser } from "@langchain/core/output_parsers";
+import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
+
+const openaiChain = ChatPromptTemplate.fromTemplate("You are a concise analyst. {task}")
+  .pipe(new ChatOpenAI({ model: "gpt-4o" }))
+  .pipe(new StringOutputParser());
+
+const anthropicChain = ChatPromptTemplate.fromTemplate("Please help with the following task: {task}")
+  .pipe(new ChatAnthropic({ model: "claude-sonnet-4-5" }))
+  .pipe(new StringOutputParser());
+
+const robustChain = openaiChain.withFallbacks([anthropicChain]);
+const result = await robustChain.invoke({ task: "Explain RAG in one paragraph." });
+```
+
+:::
 
 ---
 
@@ -339,7 +569,9 @@ flowchart TD
 
 The agent pauses and waits for a yes/no before executing. Simple to implement. Requires the user to be present.
 
-```python
+::: code-group
+
+```python [Python]
 def human_approval_gate(action_description: str) -> bool:
     print("\n" + "="*50)
     print("⚠️  AGENT WANTS TO TAKE THE FOLLOWING ACTION:")
@@ -362,11 +594,45 @@ def send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to}."
 ```
 
+```javascript [Node.js]
+import * as readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+
+async function humanApprovalGate(actionDescription) {
+  const rl = readline.createInterface({ input, output });
+  console.log("\n" + "=".repeat(50));
+  console.log("⚠️  AGENT WANTS TO TAKE THE FOLLOWING ACTION:");
+  console.log(actionDescription);
+  console.log("=".repeat(50));
+  const response = (await rl.question("Approve? (yes/no): ")).trim().toLowerCase();
+  rl.close();
+  return response === "yes" || response === "y";
+}
+
+async function sendEmail(to, subject, body) {
+  const description =
+    `Send email\n` +
+    `  To:      ${to}\n` +
+    `  Subject: ${subject}\n` +
+    `  Body:    ${body.slice(0, 200)}...`;
+
+  if (!(await humanApprovalGate(description))) {
+    return "Action cancelled by user.";
+  }
+  // proceed with the actual send
+  return `Email sent to ${to}.`;
+}
+```
+
+:::
+
 **Level 2 — LangGraph interrupt (async / production)**
 
 For production agents, LangGraph's `interrupt_before` pauses the graph at a specific node and persists state until the human responds — even if that takes hours.
 
-```python
+::: code-group
+
+```python [Python]
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from typing import TypedDict
@@ -426,7 +692,73 @@ print("Draft ready for review:", state["subject"])
 print("Agent paused. Waiting for approval.")
 ```
 
-```python
+```javascript [Node.js]
+import { StateGraph, END, START } from "@langchain/langgraph";
+import { MemorySaver } from "@langchain/langgraph";
+import { Annotation } from "@langchain/langgraph";
+
+const EmailStateAnnotation = Annotation.Root({
+  recipient: Annotation(),
+  subject:   Annotation(),
+  body:      Annotation(),
+  approved:  Annotation(),
+  sent:      Annotation(),
+});
+
+function draftEmail(state) {
+  // In real life, LLM generates this
+  return {
+    subject: "Following up on your inquiry",
+    body:    "Hi, I wanted to reach out about...",
+  };
+}
+
+function sendEmailNode(state) {
+  // Only runs after human approval
+  console.log(`Sending email to ${state.recipient}...`);
+  return { sent: true };
+}
+
+function approvalNode(state) {
+  // This node does nothing — it is just the interrupt point
+  return {};
+}
+
+const graph = new StateGraph(EmailStateAnnotation)
+  .addNode("draft",    draftEmail)
+  .addNode("approval", approvalNode)
+  .addNode("send",     sendEmailNode)
+  .addEdge(START, "draft")
+  .addEdge("draft",    "approval")
+  .addEdge("approval", "send")
+  .addEdge("send",     END);
+
+// MemorySaver persists state between runs
+const checkpointer = new MemorySaver();
+
+// interrupt_before pauses BEFORE the approval node runs
+const app = graph.compile({
+  checkpointer,
+  interruptBefore: ["approval"],
+});
+
+// Thread ID ties the run to a persistent state
+const config = { configurable: { threadId: "email-run-001" } };
+
+// First invocation: runs "draft", then pauses
+const state = await app.invoke(
+  { recipient: "client@acme.com", approved: false, sent: false, subject: "", body: "" },
+  config
+);
+console.log("Draft ready for review:", state.subject);
+console.log("Agent paused. Waiting for approval.");
+```
+
+:::
+
+::: code-group
+
+```python [Python]
 # --- Later, after the human reviews ---
 
 # Resume with approval
@@ -434,6 +766,17 @@ app.update_state(config, {"approved": True})
 final_state = app.invoke(None, config=config)
 print("Sent:", final_state["sent"])  # True
 ```
+
+```javascript [Node.js]
+// --- Later, after the human reviews ---
+
+// Resume with approval
+await app.updateState(config, { approved: true });
+const finalState = await app.invoke(null, config);
+console.log("Sent:", finalState.sent); // true
+```
+
+:::
 
 The agent genuinely paused. State was checkpointed. The human reviewed and approved. Then the graph resumed exactly where it stopped.
 
@@ -459,7 +802,9 @@ flowchart TD
   SE --> E([Done])
 ```
 
-```python
+::: code-group
+
+```python [Python]
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -580,13 +925,166 @@ print(f"\nPassed self-critique: {state['passed']} ({state['attempts']} attempt(s
 print("\nGraph paused. Awaiting human approval.")
 ```
 
-```python
+```javascript [Node.js]
+import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
+import { StateGraph, END, START } from "@langchain/langgraph";
+import { MemorySaver, Annotation } from "@langchain/langgraph";
+import { z } from "zod";
+import retry from "async-retry";
+
+// --- LLM setup with fallback ---
+const primary   = new ChatOpenAI({ model: "gpt-4o", temperature: 0.5 });
+const secondary = new ChatAnthropic({ model: "claude-sonnet-4-5" });
+const llm       = primary.withFallbacks([secondary]);
+
+const criticLlm = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+
+// --- Zod schemas ---
+const CritiqueResultSchema = z.object({
+  passed: z.boolean(),
+  issues: z.string(),
+});
+
+// --- State ---
+const AgentStateAnnotation = Annotation.Root({
+  topic:         Annotation(),
+  recipient:     Annotation(),
+  research:      Annotation(),
+  draft:         Annotation(),
+  critique:      Annotation(),
+  passed:        Annotation(),
+  attempts:      Annotation(),
+  humanApproved: Annotation(),
+  sent:          Annotation(),
+});
+
+// --- Retry wrapper ---
+async function safeInvoke(prompt) {
+  return retry(
+    async () => {
+      const result = await llm.invoke(prompt);
+      return result.content;
+    },
+    { retries: 3, factor: 2, minTimeout: 2000, maxTimeout: 30000 }
+  );
+}
+
+// --- Nodes ---
+async function research(state) {
+  const result = await safeInvoke(`Research 3 key facts about: ${state.topic}`);
+  return { research: result };
+}
+
+async function draft(state) {
+  const fix = state.critique ? `\n\nFix these issues: ${state.critique}` : "";
+  const result = await safeInvoke(
+    `Write a short, professional outreach email to ${state.recipient} ` +
+    `based on this research:\n${state.research}${fix}`
+  );
+  return { draft: result, attempts: (state.attempts ?? 0) + 1 };
+}
+
+async function selfCritique(state) {
+  const structured = criticLlm.withStructuredOutput(CritiqueResultSchema);
+  const result = await structured.invoke(
+    `Review this outreach email. Is it professional, clear, and relevant? ` +
+    `Recipient: ${state.recipient}\nEmail:\n${state.draft}`
+  );
+  return { passed: result.passed, critique: result.issues };
+}
+
+function humanGate(state) {
+  // Interrupt point — graph pauses here in production
+  return {};
+}
+
+function send(state) {
+  console.log(`✓ Email sent to ${state.recipient}`);
+  return { sent: true };
+}
+
+// --- Routers ---
+function afterCritique(state) {
+  if (state.passed || (state.attempts ?? 0) >= 3) return "approve";
+  return "revise";
+}
+
+function afterApproval(state) {
+  return state.humanApproved ? "send" : "revise";
+}
+
+// --- Graph ---
+const graph = new StateGraph(AgentStateAnnotation)
+  .addNode("research",    research)
+  .addNode("draft",       draft)
+  .addNode("selfCritique", selfCritique)
+  .addNode("humanGate",   humanGate)
+  .addNode("send",        send)
+  .addEdge(START, "research")
+  .addEdge("research", "draft")
+  .addEdge("draft", "selfCritique")
+  .addConditionalEdges("selfCritique", afterCritique, {
+    revise:  "draft",
+    approve: "humanGate",
+  })
+  .addConditionalEdges("humanGate", afterApproval, {
+    send:   "send",
+    revise: "draft",
+  })
+  .addEdge("send", END);
+
+const checkpointer = new MemorySaver();
+const app = graph.compile({
+  checkpointer,
+  interruptBefore: ["humanGate"],
+});
+const config = { configurable: { threadId: "outreach-001" } };
+
+// Run until the human gate
+const initial = {
+  topic:         "LangGraph for production AI agents",
+  recipient:     "cto@startup.io",
+  research: "", draft: "", critique: "",
+  passed: false, attempts: 0,
+  humanApproved: false, sent: false,
+};
+const state = await app.invoke(initial, config);
+
+console.log("\n=== DRAFT FOR REVIEW ===");
+console.log(state.draft);
+console.log(`\nPassed self-critique: ${state.passed} (${state.attempts} attempt(s))`);
+console.log("\nGraph paused. Awaiting human approval.");
+```
+
+:::
+
+::: code-group
+
+```python [Python]
 # Human reviews and approves (or rejects)
 approve = input("\nApprove and send? (yes/no): ").strip().lower() == "yes"
 app.update_state(config, {"human_approved": approve})
 final = app.invoke(None, config=config)
 print("Sent:", final["sent"])
 ```
+
+```javascript [Node.js]
+// Human reviews and approves (or rejects)
+import * as readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+
+const rl = readline.createInterface({ input, output });
+const answer = (await rl.question("\nApprove and send? (yes/no): ")).trim().toLowerCase();
+rl.close();
+
+const approve = answer === "yes" || answer === "y";
+await app.updateState(config, { humanApproved: approve });
+const final = await app.invoke(null, config);
+console.log("Sent:", final.sent);
+```
+
+:::
 
 ---
 
