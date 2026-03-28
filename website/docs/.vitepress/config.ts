@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
-export default defineConfig({
+export default withMermaid(defineConfig({
   title: 'Agentic AI 101',
   description: 'Beginner-to-pro guide to building agentic AI systems that do real work.',
   base: '/Agentic-AI-101/',
@@ -82,4 +83,6 @@ export default defineConfig({
       provider: 'local',
     },
   },
-})
+
+  mermaid: {},
+}))
