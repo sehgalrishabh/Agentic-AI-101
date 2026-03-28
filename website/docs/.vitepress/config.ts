@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'Agentic AI 101',
   description: 'Beginner-to-pro guide to building agentic AI systems that do real work.',
-  base: '/agentic-ai-101/',
+  base: '/Agentic-AI-101/',
 
   themeConfig: {
     logo: '🤖',
