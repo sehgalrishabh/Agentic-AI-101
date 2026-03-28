@@ -2,6 +2,8 @@
 
 Beginner-to-pro guide to building agentic AI systems that do real work. This repo is a practical path from first principles to deployment and monetization.
 
+**[📖 Read the Docs →](https://sehgalrishabh.github.io/agentic-ai-101/)**
+
 ## Who This Is For
 
 - Beginners who want a structured, practical path into agentic AI
